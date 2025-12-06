@@ -1,6 +1,7 @@
 import torch
 import time
 import json
+import random
 import platform
 import psutil
 import numpy as np
@@ -296,6 +297,7 @@ class Qwen3VL_Advanced:
         self.current_model_name = None
         self.current_quantization = None
         self.current_device = None
+        self.last_seed = -1
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
         self.image_processor = ImageProcessor()
@@ -425,8 +427,13 @@ class Qwen3VL_Advanced:
                 "🎬 视频帧数": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1}),
                 "💻 设备选择": (["auto", "cuda", "cpu", "mps"], {"default": "auto"}),
                 "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
-                "🎲 随机种子": ("INT", {"default": 1, "min": 1, "max": 0xFFFFFFFFFFFFFFFF}),
-                "🎮 种子控制": (["随机", "固定"], {"default": "随机"}),
+                "🎲 随机种子": ("INT", {
+                    "default": -1,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "tooltip": "随机种子，-1为随机"
+                }),
+                "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
             },
             "optional": {
                 "🖼️ 图像1": ("IMAGE",),
@@ -444,6 +451,18 @@ class Qwen3VL_Advanced:
     RETURN_NAMES = ("文本输出",)
     FUNCTION = "process"
     CATEGORY = "🍭大炮-Qwen3VL"
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        seed_control = kwargs.get("🎯 种子控制", "随机")
+        seed = kwargs.get("🎲 随机种子", -1)
+        
+        # 随机和递增模式下，强制更新 (返回 NaN)
+        if seed_control in ["随机", "递增"]:
+            return float("nan")
+        
+        # 固定模式下，仅当种子值变化时更新
+        return seed
 
     @torch.no_grad()
     def process(self, **kwargs):
@@ -467,150 +486,161 @@ class Qwen3VL_Advanced:
         图像4 = kwargs.get("🖼️ 图像4")
         视频 = kwargs.get("🎥 视频")
         保持模型加载 = kwargs.get("🔄 保持模型加载", True)
-        种子控制 = kwargs.get("🎮 种子控制", "随机")
+        种子控制 = kwargs.get("🎯 种子控制", "随机")
         extra_options = kwargs.get("🎯 Qwen3VL额外选项", None)
         start_time = time.time()
         
-        # 根据种子控制设置随机种子
+        # 种子逻辑处理
         if 种子控制 == "固定":
-            torch.manual_seed(随机种子)
-        else:
-            torch.manual_seed(int(time.time()))
-        
-        try:
-            self.load_model(模型名称, 量化级别, 设备选择)
-            effective_device = self.current_device
-            
-            # 确定使用的提示词（图像/视频反推专用）
-            prompt_text = SYSTEM_PROMPTS.get(预设提示词, 预设提示词)
-            if 自定义提示词 and 自定义提示词.strip():
-                prompt_text = 自定义提示词.strip()
-            
-            # 应用Qwen3VL额外选项生成增强提示词（如果有的话）
-            if extra_options:
-                try:
-                    import qwen3vl_extra_options
-                    prompt_text = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(prompt_text, extra_options)
-                    print(f"✅ 已应用Qwen3VL额外选项增强提示词")
-                except (ImportError, AttributeError) as e:
-                    print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础提示词")
-            
-            # 构建对话消息
-            conversation = [{"role": "user", "content": []}]
-            
-            # 添加多个图像
-            for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
-                if image is not None:
-                    conversation[0]["content"].append({
-                        "type": "image",
-                        "image": self.image_processor.to_pil(image)
-                    })
-            
-            # 添加视频（作为多帧图像序列）
-            if 视频 is not None:
-                video_frames = [
-                    Image.fromarray((frame.cpu().numpy() * 255).astype(np.uint8))
-                    for frame in 视频
-                ]
-                
-                # 采样视频帧
-                if len(video_frames) > 视频帧数:
-                    indices = np.linspace(0, len(video_frames) - 1, 视频帧数, dtype=int)
-                    sampled_frames = [video_frames[i] for i in indices]
-                else:
-                    sampled_frames = video_frames
-
-                # 确保至少有2帧（Qwen3-VL 要求）
-                if sampled_frames and len(sampled_frames) == 1:
-                    sampled_frames.append(sampled_frames[0])
-                    
-                if sampled_frames:
-                    conversation[0]["content"].append({
-                        "type": "video",
-                        "video": sampled_frames
-                    })
-
-            # 添加文本提示
-            conversation[0]["content"].append({
-                "type": "text",
-                "text": prompt_text
-            })
-
-            # 应用聊天模板
-            text_prompt = self.processor.apply_chat_template(
-                conversation,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            # 提取图像和视频用于处理器
-            pil_images = [
-                item['image'] for item in conversation[0]['content']
-                if item['type'] == 'image'
-            ]
-            video_frames_list = [
-                frame for item in conversation[0]['content']
-                if item['type'] == 'video'
-                for frame in item['video']
-            ]
-            videos_arg = [video_frames_list] if video_frames_list else None
-            
-            # 处理输入
-            inputs = self.processor(
-                text=text_prompt,
-                images=pil_images if pil_images else None,
-                videos=videos_arg,
-                return_tensors="pt"
-            )
-            
-            # 将输入移到设备
-            model_inputs = {
-                k: v.to(effective_device)
-                for k, v in inputs.items()
-                if torch.is_tensor(v)
-            }
-
-            # 设置停止标记
-            stop_tokens = [self.tokenizer.eos_token_id]
-            if hasattr(self.tokenizer, 'eot_id'):
-                stop_tokens.append(self.tokenizer.eot_id)
-
-            # 生成参数
-            gen_kwargs = {
-                "max_new_tokens": 最大令牌数,
-                "repetition_penalty": 重复惩罚,
-                "num_beams": 束搜索数量,
-                "eos_token_id": stop_tokens,
-                "pad_token_id": self.tokenizer.pad_token_id
-            }
-            
-            if 束搜索数量 > 1:
-                gen_kwargs["do_sample"] = False
+            effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+        elif 种子控制 == "随机":
+            effective_seed = random.randint(0, 2147483647)
+        elif 种子控制 == "递增":
+            if self.last_seed == -1:
+                effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
             else:
-                gen_kwargs.update({
-                    "do_sample": True,
-                    "temperature": 采样温度,
-                    "top_p": 核采样参数
+                effective_seed = self.last_seed + 1
+        else:
+            effective_seed = random.randint(0, 2147483647)
+        
+        self.last_seed = effective_seed
+        print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
+        torch.manual_seed(effective_seed)
+        
+        # 移除 try-except 块以便错误能正确弹出
+        # try:
+        self.load_model(模型名称, 量化级别, 设备选择)
+        effective_device = self.current_device
+        
+        # 确定使用的提示词（图像/视频反推专用）
+        prompt_text = SYSTEM_PROMPTS.get(预设提示词, 预设提示词)
+        if 自定义提示词 and 自定义提示词.strip():
+            prompt_text = 自定义提示词.strip()
+        
+        # 应用Qwen3VL额外选项生成增强提示词（如果有的话）
+        if extra_options:
+            try:
+                import qwen3vl_extra_options
+                prompt_text = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(prompt_text, extra_options)
+                print(f"✅ 已应用Qwen3VL额外选项增强提示词")
+            except (ImportError, AttributeError) as e:
+                print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础提示词")
+        
+        # 构建对话消息
+        conversation = [{"role": "user", "content": []}]
+            
+        # 添加多个图像
+        for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
+            if image is not None:
+                conversation[0]["content"].append({
+                    "type": "image",
+                    "image": self.image_processor.to_pil(image)
+                })
+        
+        # 添加视频（作为多帧图像序列）
+        if 视频 is not None:
+            video_frames = [
+                Image.fromarray((frame.cpu().numpy() * 255).astype(np.uint8))
+                for frame in 视频
+            ]
+            
+            # 采样视频帧
+            if len(video_frames) > 视频帧数:
+                indices = np.linspace(0, len(video_frames) - 1, 视频帧数, dtype=int)
+                sampled_frames = [video_frames[i] for i in indices]
+            else:
+                sampled_frames = video_frames
+
+            # 确保至少有2帧（Qwen3-VL 要求）
+            if sampled_frames and len(sampled_frames) == 1:
+                sampled_frames.append(sampled_frames[0])
+                
+            if sampled_frames:
+                conversation[0]["content"].append({
+                    "type": "video",
+                    "video": sampled_frames
                 })
 
-            # 生成文本
-            outputs = self.model.generate(**model_inputs, **gen_kwargs)
-            input_ids_len = model_inputs["input_ids"].shape[1]
-            text = self.tokenizer.decode(
-                outputs[0, input_ids_len:],
-                skip_special_tokens=True
-            )
-            
-            print(f"生成完成，耗时 {time.time() - start_time:.2f} 秒")
-            return (text.strip(),)
+        # 添加文本提示
+        conversation[0]["content"].append({
+            "type": "text",
+            "text": prompt_text
+        })
 
-        except (ValueError, RuntimeError) as e:
-            error_message = f"错误: {str(e)}"
-            print(error_message)
-            return (error_message,)
-        finally:
-            if not 保持模型加载:
-                self.clear_model_resources()
+        # 应用聊天模板
+        text_prompt = self.processor.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+            
+        # 提取图像和视频用于处理器
+        pil_images = [
+            item['image'] for item in conversation[0]['content']
+            if item['type'] == 'image'
+        ]
+        video_frames_list = [
+            frame for item in conversation[0]['content']
+            if item['type'] == 'video'
+            for frame in item['video']
+        ]
+        videos_arg = [video_frames_list] if video_frames_list else None
+        
+        # 处理输入
+        inputs = self.processor(
+            text=text_prompt,
+            images=pil_images if pil_images else None,
+            videos=videos_arg,
+            return_tensors="pt"
+        )
+        
+        # 将输入移到设备
+        model_inputs = {
+            k: v.to(effective_device)
+            for k, v in inputs.items()
+            if torch.is_tensor(v)
+        }
+
+        # 设置停止标记
+        stop_tokens = [self.tokenizer.eos_token_id]
+        if hasattr(self.tokenizer, 'eot_id'):
+            stop_tokens.append(self.tokenizer.eot_id)
+
+        # 生成参数
+        gen_kwargs = {
+            "max_new_tokens": 最大令牌数,
+            "repetition_penalty": 重复惩罚,
+            "num_beams": 束搜索数量,
+            "eos_token_id": stop_tokens,
+            "pad_token_id": self.tokenizer.pad_token_id
+        }
+        
+        if 束搜索数量 > 1:
+            gen_kwargs["do_sample"] = False
+        else:
+            gen_kwargs.update({
+                "do_sample": True,
+                "temperature": 采样温度,
+                "top_p": 核采样参数
+            })
+
+        # 生成文本
+        outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        input_ids_len = model_inputs["input_ids"].shape[1]
+        text = self.tokenizer.decode(
+            outputs[0, input_ids_len:],
+            skip_special_tokens=True
+        )
+        
+        print(f"生成完成，耗时 {time.time() - start_time:.2f} 秒")
+        if not 保持模型加载:
+            self.clear_model_resources()
+        return (text.strip(),)
+
+        # except (ValueError, RuntimeError) as e:
+        #     error_message = f"错误: {str(e)}"
+        #     print(error_message)
+        #     return (error_message,)
 
 
 class Qwen3VL_Chat:
@@ -623,6 +653,7 @@ class Qwen3VL_Chat:
         self.current_model_name = None
         self.current_quantization = None
         self.current_device = None
+        self.last_seed = -1
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
         self.image_processor = ImageProcessor()
@@ -741,8 +772,13 @@ class Qwen3VL_Chat:
                 "🌡️ 温度": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 Top-P": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "📏 最大长度": ("INT", {"default": 2048, "min": 64, "max": 4096, "step": 16}),
-                "🎲 随机种子": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
-                "🎮 种子控制": (["随机", "固定"], {"default": "随机"}),
+                "🎲 随机种子": ("INT", {
+                    "default": -1,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "tooltip": "随机种子，-1为随机"
+                }),
+                "� 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
                 "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
             },
             "optional": {
@@ -761,6 +797,18 @@ class Qwen3VL_Chat:
     FUNCTION = "chat"
     CATEGORY = "🍭大炮-Qwen3VL"
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        seed_control = kwargs.get("🎯 种子控制", "随机")
+        seed = kwargs.get("🎲 随机种子", -1)
+        
+        # 随机和递增模式下，强制更新 (返回 NaN)
+        if seed_control in ["随机", "递增"]:
+            return float("nan")
+        
+        # 固定模式下，仅当种子值变化时更新
+        return seed
+
     @torch.no_grad()
     def chat(self, **kwargs):
         """智能对话处理函数"""
@@ -772,7 +820,7 @@ class Qwen3VL_Chat:
         温度 = kwargs.get("🌡️ 温度")
         最大长度 = kwargs.get("📏 最大长度")
         随机种子 = kwargs.get("🎲 随机种子")
-        种子控制 = kwargs.get("🎮 种子控制")
+        种子控制 = kwargs.get("🎯 种子控制")
         保持模型加载 = kwargs.get("🔄 保持模型加载")
         图像1 = kwargs.get("🖼️ 图像1")
         图像2 = kwargs.get("🖼️ 图像2")
@@ -784,128 +832,139 @@ class Qwen3VL_Chat:
         
         start_time = time.time()
         
-        # 根据种子控制设置随机种子
+        # 种子逻辑处理
         if 种子控制 == "固定":
-            torch.manual_seed(随机种子)
+            effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+        elif 种子控制 == "随机":
+            effective_seed = random.randint(0, 2147483647)
+        elif 种子控制 == "递增":
+            if self.last_seed == -1:
+                effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+            else:
+                effective_seed = self.last_seed + 1
         else:
-            torch.manual_seed(int(time.time()))
+            effective_seed = random.randint(0, 2147483647)
         
-        try:
-            self.load_model(模型名称, 量化级别, "auto")
-            effective_device = self.current_device
+        self.last_seed = effective_seed
+        print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
+        torch.manual_seed(effective_seed)
+        
+        # 移除 try-except 块
+        # try:
+        self.load_model(模型名称, 量化级别, "auto")
+        effective_device = self.current_device
+        
+        # 处理系统角色定义，应用额外选项
+        system_prompt = 系统角色定义.strip() if 系统角色定义 else ""
+        
+        # 应用Qwen3VL额外选项增强系统提示词（如果有的话）
+        if extra_options and system_prompt:
+            try:
+                import qwen3vl_extra_options
+                system_prompt = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(system_prompt, extra_options)
+                print(f"✅ 已应用Qwen3VL额外选项增强系统角色")
+            except (ImportError, AttributeError) as e:
+                print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础系统角色")
+        
+        # 构建对话消息，先添加系统角色定义
+        conversation = []
             
-            # 处理系统角色定义，应用额外选项
-            system_prompt = 系统角色定义.strip() if 系统角色定义 else ""
-            
-            # 应用Qwen3VL额外选项增强系统提示词（如果有的话）
-            if extra_options and system_prompt:
-                try:
-                    import qwen3vl_extra_options
-                    system_prompt = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(system_prompt, extra_options)
-                    print(f"✅ 已应用Qwen3VL额外选项增强系统角色")
-                except (ImportError, AttributeError) as e:
-                    print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础系统角色")
-            
-            # 构建对话消息，先添加系统角色定义
-            conversation = []
-            
-            # 添加系统角色定义（如果提供）
-            if system_prompt:
-                conversation.append({
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}]
-                })
-            
-            # 添加用户消息
-            user_content = []
-            
-            # 添加多个图像
-            for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
-                if image is not None:
-                    user_content.append({
-                        "type": "image",
-                        "image": self.image_processor.to_pil(image)
-                    })
-            
-            # 添加用户文本输入
-            user_content.append({
-                "type": "text",
-                "text": 用户输入
-            })
-            
+        # 添加系统角色定义（如果提供）
+        if system_prompt:
             conversation.append({
-                "role": "user",
-                "content": user_content
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}]
             })
+        
+        # 添加用户消息
+        user_content = []
+        
+        # 添加多个图像
+        for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
+            if image is not None:
+                user_content.append({
+                    "type": "image",
+                    "image": self.image_processor.to_pil(image)
+                })
+        
+        # 添加用户文本输入
+        user_content.append({
+            "type": "text",
+            "text": 用户输入
+        })
+        
+        conversation.append({
+            "role": "user",
+            "content": user_content
+        })
 
-            # 应用聊天模板
-            text_prompt = self.processor.apply_chat_template(
-                conversation,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            # 提取图像用于处理器
-            pil_images = []
-            for msg in conversation:
-                if msg['role'] == 'user':
-                    pil_images.extend([
-                        item['image'] for item in msg['content']
-                        if item['type'] == 'image'
-                    ])
-            
-            # 处理输入
-            inputs = self.processor(
-                text=text_prompt,
-                images=pil_images if pil_images else None,
-                return_tensors="pt"
-            )
-            
-            # 将输入移到设备
-            model_inputs = {
-                k: v.to(effective_device)
-                for k, v in inputs.items()
-                if torch.is_tensor(v)
-            }
+        # 应用聊天模板
+        text_prompt = self.processor.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        # 提取图像用于处理器
+        pil_images = []
+        for msg in conversation:
+            if msg['role'] == 'user':
+                pil_images.extend([
+                    item['image'] for item in msg['content']
+                    if item['type'] == 'image'
+                ])
+        
+        # 处理输入
+        inputs = self.processor(
+            text=text_prompt,
+            images=pil_images if pil_images else None,
+            return_tensors="pt"
+        )
+        
+        # 将输入移到设备
+        model_inputs = {
+            k: v.to(effective_device)
+            for k, v in inputs.items()
+            if torch.is_tensor(v)
+        }
 
-            # 设置停止标记
-            stop_tokens = [self.tokenizer.eos_token_id]
-            if hasattr(self.tokenizer, 'eot_id'):
-                stop_tokens.append(self.tokenizer.eot_id)
+        # 设置停止标记
+        stop_tokens = [self.tokenizer.eos_token_id]
+        if hasattr(self.tokenizer, 'eot_id'):
+            stop_tokens.append(self.tokenizer.eot_id)
 
-            # 检查是否有未识别的参数
-            remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️'))}
-            if remaining_kwargs:
-                print(f"[Qwen3VL_Chat] 未识别的参数已忽略: {', '.join(remaining_kwargs.keys())}")
+        # 检查是否有未识别的参数
+        remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️'))}
+        if remaining_kwargs:
+            print(f"[Qwen3VL_Chat] 未识别的参数已忽略: {', '.join(remaining_kwargs.keys())}")
 
-            # 生成参数
-            gen_kwargs = {
-                "max_new_tokens": 最大长度,
-                "do_sample": True,
-                "temperature": 温度,
-                "top_p": top_p,
-                "eos_token_id": stop_tokens,
-                "pad_token_id": self.tokenizer.pad_token_id
-            }
+        # 生成参数
+        gen_kwargs = {
+            "max_new_tokens": 最大长度,
+            "do_sample": True,
+            "temperature": 温度,
+            "top_p": top_p,
+            "eos_token_id": stop_tokens,
+            "pad_token_id": self.tokenizer.pad_token_id
+        }
 
-            # 生成文本
-            outputs = self.model.generate(**model_inputs, **gen_kwargs)
-            input_ids_len = model_inputs["input_ids"].shape[1]
-            text = self.tokenizer.decode(
-                outputs[0, input_ids_len:],
-                skip_special_tokens=True
-            )
-            
-            print(f"对话完成，耗时 {time.time() - start_time:.2f} 秒")
-            return (text.strip(),)
+        # 生成文本
+        outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        input_ids_len = model_inputs["input_ids"].shape[1]
+        text = self.tokenizer.decode(
+            outputs[0, input_ids_len:],
+            skip_special_tokens=True
+        )
+        
+        print(f"对话完成，耗时 {time.time() - start_time:.2f} 秒")
+        if not 保持模型加载:
+            self.clear_model_resources()
+        return (text.strip(),)
 
-        except (ValueError, RuntimeError) as e:
-            error_message = f"错误: {str(e)}"
-            print(error_message)
-            return (error_message,)
-        finally:
-            if not 保持模型加载:
-                self.clear_model_resources()
+        # except (ValueError, RuntimeError) as e:
+        #     error_message = f"错误: {str(e)}"
+        #     print(error_message)
+        #     return (error_message,)
 
 
 # 节点注册

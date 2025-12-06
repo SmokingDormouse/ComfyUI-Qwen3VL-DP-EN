@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import torch
+import random
 import numpy as np
 from PIL import Image
 from pathlib import Path
@@ -50,6 +51,7 @@ class Qwen3VL_Batch_Caption:
     def __init__(self):
         # 复用 Qwen3VL_Advanced 的核心功能
         self.advanced_node = Qwen3VL_Advanced()
+        self.last_seed = -1
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -82,8 +84,13 @@ class Qwen3VL_Batch_Caption:
                 "🌡️ 采样温度": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 核采样参数": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
-                "🎲 随机种子": ("INT", {"default": 1, "min": 1, "max": 0xFFFFFFFFFFFFFFFF}),
-                "🎮 种子控制": (["随机", "固定"], {"default": "随机"}),
+                "🎲 随机种子": ("INT", {
+                    "default": -1,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "tooltip": "随机种子，-1为随机"
+                }),
+                "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
                 "📝 前缀文本": ("STRING", {
                     "default": "",
                     "multiline": False,
@@ -117,6 +124,18 @@ class Qwen3VL_Batch_Caption:
     RETURN_NAMES = ("处理结果",)
     FUNCTION = "batch_process"
     CATEGORY = "🍭大炮-Qwen3VL"
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        seed_control = kwargs.get("🎯 种子控制", "随机")
+        seed = kwargs.get("🎲 随机种子", -1)
+        
+        # 随机和递增模式下，强制更新 (返回 NaN)
+        if seed_control in ["随机", "递增"]:
+            return float("nan")
+        
+        # 固定模式下，仅当种子值变化时更新
+        return seed
     
     def process_single_image(self, image_path: str, prompt_text: str, **kwargs) -> str:
         """
@@ -157,6 +176,7 @@ class Qwen3VL_Batch_Caption:
                         "💻 设备选择": "auto",
                         "🔄 保持模型加载": True,  # 批量处理时始终保持加载
                         "🎲 随机种子": kwargs.get("随机种子"),
+                        "🎯 种子控制": kwargs.get("种子控制"),
                         "🖼️ 图像1": img_tensor,
                     }
                 )
@@ -280,17 +300,27 @@ class Qwen3VL_Batch_Caption:
         # 创建进度条
         pbar = comfy.utils.ProgressBar(len(image_files))
         
-        # 根据种子控制设置随机种子
+        # 预先尝试加载模型，以便在模型缺失时立即弹出错误（不被try-except捕获）
+        self.advanced_node.load_model(模型名称, 量化级别, "auto")
+        
+        # 计算有效的初始种子
         if 种子控制 == "固定":
-            torch.manual_seed(随机种子)
+            effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+        elif 种子控制 == "随机":
+            effective_seed = random.randint(0, 2147483647)
+        elif 种子控制 == "递增":
+            if self.last_seed == -1:
+                effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+            else:
+                effective_seed = self.last_seed + 1
+        else:
+            effective_seed = random.randint(0, 2147483647)
+            
+        self.last_seed = effective_seed
         
         # 处理每张图像
         当前编号 = 起始编号
         for idx, filename in enumerate(image_files):
-            # 如果是随机模式，每次处理前都设置新的随机种子
-            if 种子控制 == "随机":
-                torch.manual_seed(int(time.time() * 1000) + idx)
-            
             try:
                 image_path = os.path.join(输入文件夹, filename)
                 base_name = os.path.splitext(filename)[0]
