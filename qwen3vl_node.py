@@ -5,9 +5,11 @@ import random
 import platform
 import psutil
 import numpy as np
+from packaging import version
 from PIL import Image
 from enum import Enum
 from pathlib import Path
+import transformers
 from transformers import AutoModelForImageTextToText, AutoProcessor, AutoTokenizer, BitsAndBytesConfig
 from huggingface_hub import snapshot_download as hf_snapshot_download
 import folder_paths
@@ -507,8 +509,10 @@ class Qwen3VL_Advanced:
         print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
         torch.manual_seed(effective_seed)
         
-        # 移除 try-except 块以便错误能正确弹出
-        # try:
+        # 检查 transformers 版本
+        if version.parse(transformers.__version__) < version.parse("4.57.0"):
+            raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
+
         self.load_model(模型名称, 量化级别, 设备选择)
         effective_device = self.current_device
         
@@ -636,11 +640,6 @@ class Qwen3VL_Advanced:
         if not 保持模型加载:
             self.clear_model_resources()
         return (text.strip(),)
-
-        # except (ValueError, RuntimeError) as e:
-        #     error_message = f"错误: {str(e)}"
-        #     print(error_message)
-        #     return (error_message,)
 
 
 class Qwen3VL_Chat:
@@ -849,8 +848,10 @@ class Qwen3VL_Chat:
         print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
         torch.manual_seed(effective_seed)
         
-        # 移除 try-except 块
-        # try:
+        # 检查 transformers 版本
+        if version.parse(transformers.__version__) < version.parse("4.57.0"):
+            raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
+
         self.load_model(模型名称, 量化级别, "auto")
         effective_device = self.current_device
         
@@ -960,11 +961,6 @@ class Qwen3VL_Chat:
         if not 保持模型加载:
             self.clear_model_resources()
         return (text.strip(),)
-
-        # except (ValueError, RuntimeError) as e:
-        #     error_message = f"错误: {str(e)}"
-        #     print(error_message)
-        #     return (error_message,)
 
 
 # 节点注册

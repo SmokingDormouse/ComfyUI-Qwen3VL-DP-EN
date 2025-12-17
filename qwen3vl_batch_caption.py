@@ -149,45 +149,39 @@ class Qwen3VL_Batch_Caption:
         Returns:
             生成的描述文本
         """
-        try:
-            print(f"   🔍 开始处理图像: {os.path.basename(image_path)}")
-            # 加载图像
-            with Image.open(image_path) as img:
-                if img.mode == 'RGBA':
-                    img = img.convert('RGB')
-                
-                # 转换为tensor格式 (ComfyUI格式: H,W,C, 范围0-1)
-                img_array = np.array(img).astype(np.float32) / 255.0
-                img_tensor = torch.from_numpy(img_array).unsqueeze(0)  # 添加batch维度
-                
-                # 调用高级节点的处理函数
-                result = self.advanced_node.process(
-                    **{
-                        "🤖 模型选择": kwargs.get("模型名称"),
-                        "⚙️ 量化级别": kwargs.get("量化级别"),
-                        "💭 预设提示词": kwargs.get("预设提示词"),
-                        "✏️ 自定义提示词": prompt_text,
-                        "🔢 最大令牌数": kwargs.get("最大令牌数"),
-                        "🌡️ 采样温度": kwargs.get("采样温度"),
-                        "🎯 核采样参数": kwargs.get("核采样参数"),
-                        "🔍 束搜索数量": 1,
-                        "🚫 重复惩罚": 1.2,
-                        "🎬 视频帧数": 16,
-                        "💻 设备选择": "auto",
-                        "🔄 保持模型加载": True,  # 批量处理时始终保持加载
-                        "🎲 随机种子": kwargs.get("随机种子"),
-                        "🎯 种子控制": kwargs.get("种子控制"),
-                        "🖼️ 图像1": img_tensor,
-                    }
-                )
-                
-                return result[0] if result else ""
-                
-        except Exception as e:
-            print(f"❌ 处理图像失败 {image_path}: {str(e)}")
-            import traceback
-            traceback.print_exc()  # 打印完整的错误堆栈信息
-            return ""
+        # 移除try-except，让错误直接抛出
+        print(f"   🔍 开始处理图像: {os.path.basename(image_path)}")
+        # 加载图像
+        with Image.open(image_path) as img:
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+            
+            # 转换为tensor格式 (ComfyUI格式: H,W,C, 范围0-1)
+            img_array = np.array(img).astype(np.float32) / 255.0
+            img_tensor = torch.from_numpy(img_array).unsqueeze(0)  # 添加batch维度
+            
+            # 调用高级节点的处理函数
+            result = self.advanced_node.process(
+                **{
+                    "🤖 模型选择": kwargs.get("模型名称"),
+                    "⚙️ 量化级别": kwargs.get("量化级别"),
+                    "💭 预设提示词": kwargs.get("预设提示词"),
+                    "✏️ 自定义提示词": prompt_text,
+                    "🔢 最大令牌数": kwargs.get("最大令牌数"),
+                    "🌡️ 采样温度": kwargs.get("采样温度"),
+                    "🎯 核采样参数": kwargs.get("核采样参数"),
+                    "🔍 束搜索数量": 1,
+                    "🚫 重复惩罚": 1.2,
+                    "🎬 视频帧数": 16,
+                    "💻 设备选择": "auto",
+                    "🔄 保持模型加载": True,  # 批量处理时始终保持加载
+                    "🎲 随机种子": kwargs.get("随机种子"),
+                    "🎯 种子控制": kwargs.get("种子控制"),
+                    "🖼️ 图像1": img_tensor,
+                }
+            )
+            
+            return result[0] if result else ""
     
     @torch.no_grad()
     def batch_process(self, **kwargs):
@@ -321,93 +315,87 @@ class Qwen3VL_Batch_Caption:
         # 处理每张图像
         当前编号 = 起始编号
         for idx, filename in enumerate(image_files):
-            try:
-                image_path = os.path.join(输入文件夹, filename)
-                base_name = os.path.splitext(filename)[0]
-                
-                # 确定输出文件名
-                if 重命名文件:
-                    new_base_name = f"{文件名前缀}{当前编号:04d}"
-                    当前编号 += 1
+            # 移除try以便错误能直接抛出
+            image_path = os.path.join(输入文件夹, filename)
+            base_name = os.path.splitext(filename)[0]
+            
+            # 确定输出文件名
+            if 重命名文件:
+                new_base_name = f"{文件名前缀}{当前编号:04d}"
+                当前编号 += 1
+            else:
+                new_base_name = base_name
+                # 如果文件名重复，添加扩展名后缀以区分
+                original_ext = os.path.splitext(filename)[1].lower()
+                if original_ext in ['.jpeg', '.jpg']:
+                    ext_suffix = '_jpg'
+                elif original_ext == '.png':
+                    ext_suffix = '_png'
+                elif original_ext == '.bmp':
+                    ext_suffix = '_bmp'
+                elif original_ext == '.webp':
+                    ext_suffix = '_webp'
+                elif original_ext == '.gif':
+                    ext_suffix = '_gif'
                 else:
-                    new_base_name = base_name
-                    # 如果文件名重复，添加扩展名后缀以区分
-                    original_ext = os.path.splitext(filename)[1].lower()
-                    if original_ext in ['.jpeg', '.jpg']:
-                        ext_suffix = '_jpg'
-                    elif original_ext == '.png':
-                        ext_suffix = '_png'
-                    elif original_ext == '.bmp':
-                        ext_suffix = '_bmp'
-                    elif original_ext == '.webp':
-                        ext_suffix = '_webp'
-                    elif original_ext == '.gif':
-                        ext_suffix = '_gif'
-                    else:
-                        ext_suffix = original_ext.replace('.', '_')
-                    
-                    # 检查是否需要添加后缀来避免重复
-                    base_text_path = os.path.join(输出文件夹, f"{new_base_name}.txt")
-                    if os.path.exists(base_text_path) and not 强制覆盖:
-                        new_base_name = f"{base_name}{ext_suffix}"
+                    ext_suffix = original_ext.replace('.', '_')
                 
-                text_path = os.path.join(输出文件夹, f"{new_base_name}.txt")
-                
-                # 检查是否已存在描述文件（只有在不强制覆盖时才跳过）
-                if os.path.exists(text_path) and not 强制覆盖:
-                    print(f"⏭️ 跳过已存在: {filename} (如需覆盖请启用'强制覆盖'选项)")
-                    跳过数量 += 1
-                    跳过文件.append(filename)
-                    pbar.update_absolute(idx + 1, len(image_files))
-                    continue
-                elif os.path.exists(text_path) and 强制覆盖:
-                    print(f"🔄 强制覆盖: {filename}")
-                
-                print(f"🖼️ 处理中 [{idx+1}/{len(image_files)}]: {filename}")
-                print(f"   📁 图像路径: {image_path}")
-                print(f"   📝 输出路径: {text_path}")
-                
-                # 处理图像
-                caption = self.process_single_image(
-                    image_path,
-                    prompt_text,
-                    模型名称=模型名称,
-                    量化级别=量化级别,
-                    预设提示词=预设提示词,
-                    最大令牌数=最大令牌数,
-                    采样温度=采样温度,
-                    核采样参数=核采样参数,
-                    随机种子=随机种子
-                )
-                
-                if caption:
-                    # 添加前缀和后缀
-                    if 前缀文本:
-                        caption = f"{前缀文本} {caption}"
-                    if 后缀文本:
-                        caption = f"{caption} {后缀文本}"
-                    
-                    # 保存描述文件
-                    with open(text_path, 'w', encoding='utf-8') as f:
-                        f.write(caption)
-                    
-                    print(f"✅ 成功: {new_base_name}.txt")
-                    print(f"   描述: {caption[:100]}{'...' if len(caption) > 100 else ''}\n")
-                    成功数量 += 1
-                    成功文件.append(filename)
-                else:
-                    print(f"❌ 失败: 生成描述为空\n")
-                    失败数量 += 1
-                    失败文件.append(filename)
-                
-                # 更新进度条
+                # 检查是否需要添加后缀来避免重复
+                base_text_path = os.path.join(输出文件夹, f"{new_base_name}.txt")
+                if os.path.exists(base_text_path) and not 强制覆盖:
+                    new_base_name = f"{base_name}{ext_suffix}"
+            
+            text_path = os.path.join(输出文件夹, f"{new_base_name}.txt")
+            
+            # 检查是否已存在描述文件（只有在不强制覆盖时才跳过）
+            if os.path.exists(text_path) and not 强制覆盖:
+                print(f"⏭️ 跳过已存在: {filename} (如需覆盖请启用'强制覆盖'选项)")
+                跳过数量 += 1
+                跳过文件.append(filename)
                 pbar.update_absolute(idx + 1, len(image_files))
+                continue
+            elif os.path.exists(text_path) and 强制覆盖:
+                print(f"🔄 强制覆盖: {filename}")
+            
+            print(f"🖼️ 处理中 [{idx+1}/{len(image_files)}]: {filename}")
+            print(f"   📁 图像路径: {image_path}")
+            print(f"   📝 输出路径: {text_path}")
+            
+            # 处理图像
+            caption = self.process_single_image(
+                image_path,
+                prompt_text,
+                模型名称=模型名称,
+                量化级别=量化级别,
+                预设提示词=预设提示词,
+                最大令牌数=最大令牌数,
+                采样温度=采样温度,
+                核采样参数=核采样参数,
+                随机种子=随机种子
+            )
+            
+            if caption:
+                # 添加前缀和后缀
+                if 前缀文本:
+                    caption = f"{前缀文本} {caption}"
+                if 后缀文本:
+                    caption = f"{caption} {后缀文本}"
                 
-            except Exception as e:
-                print(f"❌ 处理失败 {filename}: {str(e)}\n")
+                # 保存描述文件
+                with open(text_path, 'w', encoding='utf-8') as f:
+                    f.write(caption)
+                
+                print(f"✅ 成功: {new_base_name}.txt")
+                print(f"   描述: {caption[:100]}{'...' if len(caption) > 100 else ''}\n")
+                成功数量 += 1
+                成功文件.append(filename)
+            else:
+                print(f"❌ 失败: 生成描述为空\n")
                 失败数量 += 1
                 失败文件.append(filename)
-                pbar.update_absolute(idx + 1, len(image_files))
+            
+            # 更新进度条
+            pbar.update_absolute(idx + 1, len(image_files))
         
         # 清理模型（如果不保持加载）
         if not 保持模型加载:
