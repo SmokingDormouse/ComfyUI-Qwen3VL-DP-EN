@@ -5,6 +5,7 @@ import random
 import platform
 import psutil
 import numpy as np
+
 from packaging import version
 from PIL import Image
 from enum import Enum
@@ -428,7 +429,8 @@ class Qwen3VL_Advanced:
                 "🚫 重复惩罚": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "🎬 视频帧数": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1}),
                 "💻 设备选择": (["auto", "cuda", "cpu", "mps"], {"default": "auto"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
+                "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
+                "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
                 "🎲 随机种子": ("INT", {
                     "default": -1,
                     "min": -1,
@@ -488,9 +490,17 @@ class Qwen3VL_Advanced:
         图像4 = kwargs.get("🖼️ 图像4")
         视频 = kwargs.get("🎥 视频")
         保持模型加载 = kwargs.get("🔄 保持模型加载", True)
+        开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
         种子控制 = kwargs.get("🎯 种子控制", "随机")
         extra_options = kwargs.get("🎯 Qwen3VL额外选项", None)
         start_time = time.time()
+        
+        # 设置 TF32 加速
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = 开启TF32加速
+            torch.backends.cudnn.allow_tf32 = 开启TF32加速
+            if 开启TF32加速:
+                print("🚀 已开启 TF32 加速模式")
         
         # 种子逻辑处理
         if 种子控制 == "固定":
@@ -513,7 +523,9 @@ class Qwen3VL_Advanced:
         if version.parse(transformers.__version__) < version.parse("4.57.0"):
             raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
 
+        load_start = time.time()
         self.load_model(模型名称, 量化级别, 设备选择)
+        load_time = time.time() - load_start
         effective_device = self.current_device
         
         # 确定使用的提示词（图像/视频反推专用）
@@ -629,14 +641,19 @@ class Qwen3VL_Advanced:
             })
 
         # 生成文本
+        gen_start = time.time()
         outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        gen_time = time.time() - gen_start
+        
         input_ids_len = model_inputs["input_ids"].shape[1]
         text = self.tokenizer.decode(
             outputs[0, input_ids_len:],
             skip_special_tokens=True
         )
         
-        print(f"生成完成，耗时 {time.time() - start_time:.2f} 秒")
+        total_time = time.time() - start_time
+        print(f"⏱️ 耗时统计: 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s | 总计 {total_time:.2f}s")
+        
         if not 保持模型加载:
             self.clear_model_resources()
         return (text.strip(),)
@@ -777,8 +794,9 @@ class Qwen3VL_Chat:
                     "max": 0xffffffffffffffff,
                     "tooltip": "随机种子，-1为随机"
                 }),
-                "� 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
+                "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
+                "🚀 开启TF32加速": ("BOOLEAN", {"default": True, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
+                "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "🖼️ 图像1": ("IMAGE",),
@@ -821,6 +839,7 @@ class Qwen3VL_Chat:
         随机种子 = kwargs.get("🎲 随机种子")
         种子控制 = kwargs.get("🎯 种子控制")
         保持模型加载 = kwargs.get("🔄 保持模型加载")
+        开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
         图像1 = kwargs.get("🖼️ 图像1")
         图像2 = kwargs.get("🖼️ 图像2")
         图像3 = kwargs.get("🖼️ 图像3")
@@ -830,6 +849,13 @@ class Qwen3VL_Chat:
         top_p = kwargs.get("🎯 Top-P", 0.90)
         
         start_time = time.time()
+        
+        # 设置 TF32 加速
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = 开启TF32加速
+            torch.backends.cudnn.allow_tf32 = 开启TF32加速
+            if 开启TF32加速:
+                print("🚀 已开启 TF32 加速模式")
         
         # 种子逻辑处理
         if 种子控制 == "固定":
@@ -852,7 +878,9 @@ class Qwen3VL_Chat:
         if version.parse(transformers.__version__) < version.parse("4.57.0"):
             raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
 
+        load_start = time.time()
         self.load_model(模型名称, 量化级别, "auto")
+        load_time = time.time() - load_start
         effective_device = self.current_device
         
         # 处理系统角色定义，应用额外选项
@@ -935,7 +963,7 @@ class Qwen3VL_Chat:
             stop_tokens.append(self.tokenizer.eot_id)
 
         # 检查是否有未识别的参数
-        remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️'))}
+        remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️', '🚀'))}
         if remaining_kwargs:
             print(f"[Qwen3VL_Chat] 未识别的参数已忽略: {', '.join(remaining_kwargs.keys())}")
 
@@ -950,14 +978,19 @@ class Qwen3VL_Chat:
         }
 
         # 生成文本
+        gen_start = time.time()
         outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        gen_time = time.time() - gen_start
+        
         input_ids_len = model_inputs["input_ids"].shape[1]
         text = self.tokenizer.decode(
             outputs[0, input_ids_len:],
             skip_special_tokens=True
         )
         
-        print(f"对话完成，耗时 {time.time() - start_time:.2f} 秒")
+        total_time = time.time() - start_time
+        print(f"⏱️ 耗时统计: 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s | 总计 {total_time:.2f}s")
+        
         if not 保持模型加载:
             self.clear_model_resources()
         return (text.strip(),)

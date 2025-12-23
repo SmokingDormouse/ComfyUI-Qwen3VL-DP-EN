@@ -83,6 +83,7 @@ class Qwen3VL_Batch_Caption:
                 "🔢 最大令牌数": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16}),
                 "🌡️ 采样温度": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 核采样参数": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "🚀 开启TF32加速": ("BOOLEAN", {"default": True, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
                 "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
                 "🎲 随机种子": ("INT", {
                     "default": -1,
@@ -174,6 +175,7 @@ class Qwen3VL_Batch_Caption:
                     "🚫 重复惩罚": 1.2,
                     "🎬 视频帧数": 16,
                     "💻 设备选择": "auto",
+                    "🚀 开启TF32加速": kwargs.get("开启TF32加速", False),
                     "🔄 保持模型加载": True,  # 批量处理时始终保持加载
                     "🎲 随机种子": kwargs.get("随机种子"),
                     "🎯 种子控制": kwargs.get("种子控制"),
@@ -197,8 +199,9 @@ class Qwen3VL_Batch_Caption:
         采样温度 = kwargs.get("🌡️ 采样温度")
         核采样参数 = kwargs.get("🎯 核采样参数")
         保持模型加载 = kwargs.get("🔄 保持模型加载")
+        开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
         随机种子 = kwargs.get("🎲 随机种子")
-        种子控制 = kwargs.get("🎮 种子控制", "随机")
+        种子控制 = kwargs.get("🎯 种子控制", "随机")
         前缀文本 = kwargs.get("📝 前缀文本", "").strip()
         后缀文本 = kwargs.get("📌 后缀文本", "").strip()
         重命名文件 = kwargs.get("🔄 重命名文件", False)
@@ -206,6 +209,13 @@ class Qwen3VL_Batch_Caption:
         起始编号 = kwargs.get("🔢 起始编号", 1)
         强制覆盖 = kwargs.get("🔄 强制覆盖", False)
         
+        # 设置 TF32 加速
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = 开启TF32加速
+            torch.backends.cudnn.allow_tf32 = 开启TF32加速
+            if 开启TF32加速:
+                print("🚀 已开启 TF32 加速模式")
+
         # 如果种子控制是随机，默认强制覆盖
         if 种子控制 == "随机":
             强制覆盖 = True
@@ -371,7 +381,9 @@ class Qwen3VL_Batch_Caption:
                 最大令牌数=最大令牌数,
                 采样温度=采样温度,
                 核采样参数=核采样参数,
-                随机种子=随机种子
+                开启TF32加速=开启TF32加速,
+                随机种子=随机种子,
+                种子控制=种子控制
             )
             
             if caption:
