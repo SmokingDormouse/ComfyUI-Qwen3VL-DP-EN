@@ -69,6 +69,7 @@ class Qwen3VL_Compare_Caption:
             "required": {
                 "🤖 模型选择": (model_names, {"default": default_model}),
                 "⚙️ 量化级别": (list(Quantization.get_values()), {"default": Quantization.NONE}),
+                "🖼️ 最大长边": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
                 "📁 A文件夹(原始图)": ("STRING", {
                     "default": "",
                     "multiline": False,
@@ -94,8 +95,8 @@ class Qwen3VL_Compare_Caption:
                 "🔢 最大令牌数": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16}),
                 "🌡️ 采样温度": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 核采样参数": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "🚀 开启TF32加速": ("BOOLEAN", {"default": True, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
+                "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
+                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
                 "🎲 随机种子": ("INT", {
                     "default": -1,
                     "min": -1,
@@ -159,6 +160,13 @@ class Qwen3VL_Compare_Caption:
             with Image.open(img_path) as img:
                 if img.mode == 'RGBA':
                     img = img.convert('RGB')
+
+                最大长边 = kwargs.get("最大长边", 768)
+                if 最大长边 and 最大长边 > 0:
+                    w, h = img.size
+                    if w > 最大长边 or h > 最大长边:
+                        resample = getattr(Image, "Resampling", Image).LANCZOS
+                        img.thumbnail((最大长边, 最大长边), resample=resample)
                 
                 # 转换为tensor格式 (ComfyUI格式: H,W,C, 范围0-1)
                 img_array = np.array(img).astype(np.float32) / 255.0
@@ -170,6 +178,7 @@ class Qwen3VL_Compare_Caption:
             **{
                 "🤖 模型选择": kwargs.get("模型名称"),
                 "⚙️ 量化级别": kwargs.get("量化级别"),
+                "🖼️ 最大长边": kwargs.get("最大长边", 768),
                 "💭 预设提示词": "自定义",  # 使用自定义提示词
                 "✏️ 自定义提示词": prompt_text,
                 "🔢 最大令牌数": kwargs.get("最大令牌数"),
@@ -180,7 +189,7 @@ class Qwen3VL_Compare_Caption:
                 "🎬 视频帧数": 16,
                 "💻 设备选择": "auto",
                 "🚀 开启TF32加速": kwargs.get("开启TF32加速", False),
-                "🔄 保持模型加载": True,  # 批量处理时始终保持加载
+                "🔄 保持模型加载": kwargs.get("保持模型加载", False),
                 "🎲 随机种子": kwargs.get("随机种子"),
                 "🎯 种子控制": kwargs.get("种子控制"),
                 "🖼️ 图像1": images[0],  # 原始图（第一张）
@@ -254,6 +263,7 @@ class Qwen3VL_Compare_Caption:
         # 提取参数
         模型名称 = kwargs.get("🤖 模型选择")
         量化级别 = kwargs.get("⚙️ 量化级别")
+        最大长边 = kwargs.get("🖼️ 最大长边", 768)
         A文件夹 = kwargs.get("📁 A文件夹(原始图)", "").strip()
         B文件夹 = kwargs.get("📂 B文件夹(结果图)", "").strip()
         语言选择 = kwargs.get("🌍 语言选择", "中文")
@@ -263,7 +273,7 @@ class Qwen3VL_Compare_Caption:
         最大令牌数 = kwargs.get("🔢 最大令牌数")
         采样温度 = kwargs.get("🌡️ 采样温度")
         核采样参数 = kwargs.get("🎯 核采样参数")
-        保持模型加载 = kwargs.get("🔄 保持模型加载")
+        保持模型加载 = kwargs.get("🔄 保持模型加载", False)
         开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
         随机种子 = kwargs.get("🎲 随机种子")
         种子控制 = kwargs.get("🎯 种子控制", "随机")
@@ -389,10 +399,12 @@ class Qwen3VL_Compare_Caption:
                 prompt_text,
                 模型名称=模型名称,
                 量化级别=量化级别,
+                最大长边=最大长边,
                 最大令牌数=最大令牌数,
                 采样温度=采样温度,
                 核采样参数=核采样参数,
                 开启TF32加速=开启TF32加速,
+                保持模型加载=保持模型加载,
                 随机种子=随机种子,
                 种子控制=种子控制
             )

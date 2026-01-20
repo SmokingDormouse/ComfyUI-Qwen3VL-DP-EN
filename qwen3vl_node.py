@@ -172,14 +172,28 @@ def check_flash_attention() -> bool:
         return False
     return False
 
+def resolve_attn_implementation(attn_mode: str) -> str:
+    if attn_mode == "Flash Attention 2":
+        if check_flash_attention():
+            return "flash_attention_2"
+        print("⚠️ Flash Attention 2 不可用（未安装或环境不支持），已改用 SDPA")
+        return "sdpa"
+    return "sdpa"
+
 class ImageProcessor:
     """图像处理器"""
-    def to_pil(self, image_tensor: torch.Tensor) -> Image.Image:
+    def to_pil(self, image_tensor: torch.Tensor, max_side: int = 0) -> Image.Image:
         """将 ComfyUI 图像张量转换为 PIL Image"""
         if image_tensor.dim() == 4:
             image_tensor = image_tensor[0]
         image_np = (image_tensor.cpu().numpy() * 255).astype(np.uint8)
-        return Image.fromarray(image_np)
+        img = Image.fromarray(image_np)
+        if max_side and max_side > 0:
+            w, h = img.size
+            if w > max_side or h > max_side:
+                resample = getattr(Image, "Resampling", Image).LANCZOS
+                img.thumbnail((max_side, max_side), resample=resample)
+        return img
 
 class ModelDownloader:
     """模型下载器
@@ -300,6 +314,8 @@ class Qwen3VL_Advanced:
         self.current_model_name = None
         self.current_quantization = None
         self.current_device = None
+        self.current_attn_implementation = None
+        self.model_device = None
         self.last_seed = -1
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
@@ -319,7 +335,7 @@ class Qwen3VL_Advanced:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    def load_model(self, model_name: str, quantization_str: str, device: str = "auto"):
+    def load_model(self, model_name: str, quantization_str: str, device: str = "auto", attn_mode: str = "SDPA"):
         """加载模型
         
         Args:
@@ -330,13 +346,16 @@ class Qwen3VL_Advanced:
         Raises:
             ValueError: 当 GPU 不支持 FP8 模型或使用 abliterated 模型时
         """
+        self.device_info = get_device_info()
         effective_device = self.device_info["recommended_device"] if device == "auto" else device
+        attn_implementation = resolve_attn_implementation(attn_mode)
         
         # 如果模型已加载且配置相同，则跳过
         if (self.model is not None and 
             self.current_model_name == model_name and 
             self.current_quantization == quantization_str and 
-            self.current_device == effective_device):
+            self.current_device == effective_device and
+            self.current_attn_implementation == attn_implementation):
             return
 
         self.clear_model_resources()
@@ -386,7 +405,7 @@ class Qwen3VL_Advanced:
         load_kwargs = {
             "device_map": device_map,
             "torch_dtype": load_dtype,
-            "attn_implementation": "flash_attention_2" if check_flash_attention() else "sdpa",
+            "attn_implementation": attn_implementation,
             "use_safetensors": True,
             "trust_remote_code": True  # abliterated 模型需要
         }
@@ -403,6 +422,11 @@ class Qwen3VL_Advanced:
         self.current_model_name = model_name
         self.current_quantization = quantization_str
         self.current_device = effective_device
+        self.current_attn_implementation = attn_implementation
+        try:
+            self.model_device = str(next(self.model.parameters()).device)
+        except StopIteration:
+            self.model_device = effective_device
         print("模型加载成功")
 
     @classmethod
@@ -416,6 +440,8 @@ class Qwen3VL_Advanced:
             "required": {
                 "🤖 模型选择": (model_names, {"default": default_model}),
                 "⚙️ 量化级别": (list(Quantization.get_values()), {"default": Quantization.NONE}),
+                "🧠 注意力模式": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
+                "🖼️ 最大长边": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
                 "💭 预设提示词": (preset_prompts, {"default": preset_prompts[2]}),
                 "✏️ 自定义提示词": ("STRING", {
                     "default": "",
@@ -430,7 +456,8 @@ class Qwen3VL_Advanced:
                 "🎬 视频帧数": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1}),
                 "💻 设备选择": (["auto", "cuda", "cpu", "mps"], {"default": "auto"}),
                 "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
+                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
+                "🧪 性能诊断": ("BOOLEAN", {"default": False, "tooltip": "打印一次关键环境与推理信息（用于排查慢速问题）"}),
                 "🎲 随机种子": ("INT", {
                     "default": -1,
                     "min": -1,
@@ -474,6 +501,9 @@ class Qwen3VL_Advanced:
         # 提取参数（兼容带emoji的参数名）
         模型名称 = kwargs.get("🤖 模型选择")
         量化级别 = kwargs.get("⚙️ 量化级别")
+        注意力模式 = kwargs.get("🧠 注意力模式", "SDPA")
+        最大长边 = kwargs.get("🖼️ 最大长边", 768)
+        性能诊断 = kwargs.get("🧪 性能诊断", False)
         预设提示词 = kwargs.get("💭 预设提示词")
         最大令牌数 = kwargs.get("🔢 最大令牌数")
         采样温度 = kwargs.get("🌡️ 采样温度")
@@ -489,7 +519,7 @@ class Qwen3VL_Advanced:
         图像3 = kwargs.get("🖼️ 图像3")
         图像4 = kwargs.get("🖼️ 图像4")
         视频 = kwargs.get("🎥 视频")
-        保持模型加载 = kwargs.get("🔄 保持模型加载", True)
+        保持模型加载 = kwargs.get("🔄 保持模型加载", False)
         开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
         种子控制 = kwargs.get("🎯 种子控制", "随机")
         extra_options = kwargs.get("🎯 Qwen3VL额外选项", None)
@@ -524,9 +554,45 @@ class Qwen3VL_Advanced:
             raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
 
         load_start = time.time()
-        self.load_model(模型名称, 量化级别, 设备选择)
+        self.load_model(模型名称, 量化级别, 设备选择, 注意力模式)
         load_time = time.time() - load_start
         effective_device = self.current_device
+        device_for_log = self.model_device or effective_device
+        if effective_device == "cpu" and torch.cuda.is_available():
+            print("⚠️ 当前在 CPU 推理；请检查 torch 是否为 CUDA 版本。")
+        if 性能诊断:
+            try:
+                import sys
+                model_dtype = None
+                try:
+                    model_dtype = str(next(self.model.parameters()).dtype)
+                except StopIteration:
+                    model_dtype = "unknown"
+                try:
+                    sdp_info = f"sdp_flash={torch.backends.cuda.flash_sdp_enabled()} sdp_mem_efficient={torch.backends.cuda.mem_efficient_sdp_enabled()} sdp_math={torch.backends.cuda.math_sdp_enabled()}"
+                except Exception:
+                    sdp_info = "sdp_info=unknown"
+                pv_shape = None
+                if "pixel_values" in model_inputs and torch.is_tensor(model_inputs["pixel_values"]):
+                    pv = model_inputs["pixel_values"]
+                    pv_shape = f"pixel_values={tuple(pv.shape)} {str(pv.dtype).replace('torch.', '')}"
+                elif "pixel_values_videos" in model_inputs and torch.is_tensor(model_inputs["pixel_values_videos"]):
+                    pv = model_inputs["pixel_values_videos"]
+                    pv_shape = f"pixel_values_videos={tuple(pv.shape)} {str(pv.dtype).replace('torch.', '')}"
+                else:
+                    pv_shape = "pixel_values=none"
+                py = sys.version.split()[0]
+                torch_info = f"torch={torch.__version__} cuda={torch.version.cuda} is_cuda={torch.cuda.is_available()}"
+                gpu_info = "gpu=none"
+                if torch.cuda.is_available():
+                    gpu_info = f"gpu={torch.cuda.get_device_name(0)} cap={torch.cuda.get_device_capability(0)}"
+                print(f"[PerfDiag] python={py} {torch_info}")
+                print(f"[PerfDiag] {gpu_info} {sdp_info}")
+                print(f"[PerfDiag] model_device={device_for_log} model_dtype={model_dtype} attn={self.current_attn_implementation}")
+                print(f"[PerfDiag] {pv_shape} max_side={最大长边}")
+                print(f"[PerfDiag] max_new_tokens={最大令牌数} num_beams={束搜索数量} do_sample={束搜索数量<=1}")
+            except Exception:
+                pass
         
         # 确定使用的提示词（图像/视频反推专用）
         prompt_text = SYSTEM_PROMPTS.get(预设提示词, 预设提示词)
@@ -550,7 +616,7 @@ class Qwen3VL_Advanced:
             if image is not None:
                 conversation[0]["content"].append({
                     "type": "image",
-                    "image": self.image_processor.to_pil(image)
+                    "image": self.image_processor.to_pil(image, 最大长边)
                 })
         
         # 添加视频（作为多帧图像序列）
@@ -574,7 +640,7 @@ class Qwen3VL_Advanced:
             if sampled_frames:
                 conversation[0]["content"].append({
                     "type": "video",
-                    "video": sampled_frames
+                    "video": [self.image_processor.to_pil(f, 最大长边) for f in sampled_frames]
                 })
 
         # 添加文本提示
@@ -642,7 +708,16 @@ class Qwen3VL_Advanced:
 
         # 生成文本
         gen_start = time.time()
-        outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        if "cuda" in str(effective_device) and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        if self.current_attn_implementation == "sdpa" and "cuda" in str(effective_device) and torch.cuda.is_available() and hasattr(torch.backends.cuda, "sdp_kernel"):
+            with torch.inference_mode(), torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=True):
+                outputs = self.model.generate(**model_inputs, **gen_kwargs, use_cache=True)
+        else:
+            with torch.inference_mode():
+                outputs = self.model.generate(**model_inputs, **gen_kwargs, use_cache=True)
+        if "cuda" in str(effective_device) and torch.cuda.is_available():
+            torch.cuda.synchronize()
         gen_time = time.time() - gen_start
         
         input_ids_len = model_inputs["input_ids"].shape[1]
@@ -652,7 +727,9 @@ class Qwen3VL_Advanced:
         )
         
         total_time = time.time() - start_time
-        print(f"⏱️ 耗时统计: 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s | 总计 {total_time:.2f}s")
+        generated_tokens = int(outputs.shape[1] - input_ids_len) if hasattr(outputs, "shape") else 0
+        tps = (generated_tokens / gen_time) if gen_time > 0 else 0.0
+        print(f"⏱️ 耗时统计: 设备 {device_for_log} | 注意力 {self.current_attn_implementation} | 输入 {input_ids_len} | 输出 {generated_tokens} | 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s ({tps:.1f} tok/s) | 总计 {total_time:.2f}s")
         
         if not 保持模型加载:
             self.clear_model_resources()
@@ -669,6 +746,8 @@ class Qwen3VL_Chat:
         self.current_model_name = None
         self.current_quantization = None
         self.current_device = None
+        self.current_attn_implementation = None
+        self.model_device = None
         self.last_seed = -1
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
@@ -688,15 +767,18 @@ class Qwen3VL_Chat:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    def load_model(self, model_name: str, quantization_str: str, device: str = "auto"):
+    def load_model(self, model_name: str, quantization_str: str, device: str = "auto", attn_mode: str = "SDPA"):
         """加载模型"""
+        self.device_info = get_device_info()
         effective_device = self.device_info["recommended_device"] if device == "auto" else device
+        attn_implementation = resolve_attn_implementation(attn_mode)
         
         # 如果模型已加载且配置相同，则跳过
         if (self.model is not None and 
             self.current_model_name == model_name and 
             self.current_quantization == quantization_str and 
-            self.current_device == effective_device):
+            self.current_device == effective_device and
+            self.current_attn_implementation == attn_implementation):
             return
 
         self.clear_model_resources()
@@ -746,7 +828,7 @@ class Qwen3VL_Chat:
         load_kwargs = {
             "device_map": device_map,
             "torch_dtype": load_dtype,
-            "attn_implementation": "flash_attention_2" if check_flash_attention() else "sdpa",
+            "attn_implementation": attn_implementation,
             "use_safetensors": True,
             "trust_remote_code": True
         }
@@ -763,6 +845,11 @@ class Qwen3VL_Chat:
         self.current_model_name = model_name
         self.current_quantization = quantization_str
         self.current_device = effective_device
+        self.current_attn_implementation = attn_implementation
+        try:
+            self.model_device = str(next(self.model.parameters()).device)
+        except StopIteration:
+            self.model_device = effective_device
         print("模型加载成功")
 
     @classmethod
@@ -775,6 +862,8 @@ class Qwen3VL_Chat:
             "required": {
                 "🤖 模型选择": (model_names, {"default": default_model}),
                 "⚙️ 量化级别": (list(Quantization.get_values()), {"default": Quantization.NONE}),
+                "🧠 注意力模式": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
+                "🖼️ 最大长边": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
                 "💬 用户输入": ("STRING", {
                     "default": "你好，请介绍一下你自己。",
                     "multiline": True,
@@ -787,7 +876,7 @@ class Qwen3VL_Chat:
                 }),
                 "🌡️ 温度": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 Top-P": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "📏 最大长度": ("INT", {"default": 2048, "min": 64, "max": 4096, "step": 16}),
+                "📏 最大长度": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16, "tooltip": "生成的最大新token数；数值越大越慢"}),
                 "🎲 随机种子": ("INT", {
                     "default": -1,
                     "min": -1,
@@ -795,8 +884,9 @@ class Qwen3VL_Chat:
                     "tooltip": "随机种子，-1为随机"
                 }),
                 "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
-                "🚀 开启TF32加速": ("BOOLEAN", {"default": True, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": True}),
+                "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
+                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
+                "🧪 性能诊断": ("BOOLEAN", {"default": False, "tooltip": "打印一次关键环境与推理信息（用于排查慢速问题）"}),
             },
             "optional": {
                 "🖼️ 图像1": ("IMAGE",),
@@ -832,14 +922,17 @@ class Qwen3VL_Chat:
         # 提取参数（兼容带emoji的参数名）
         模型名称 = kwargs.get("🤖 模型选择")
         量化级别 = kwargs.get("⚙️ 量化级别")
+        注意力模式 = kwargs.get("🧠 注意力模式", "SDPA")
+        最大长边 = kwargs.get("🖼️ 最大长边", 768)
         用户输入 = kwargs.get("💬 用户输入")
         系统角色定义 = kwargs.get("🎭 系统角色定义")
         温度 = kwargs.get("🌡️ 温度")
         最大长度 = kwargs.get("📏 最大长度")
         随机种子 = kwargs.get("🎲 随机种子")
         种子控制 = kwargs.get("🎯 种子控制")
-        保持模型加载 = kwargs.get("🔄 保持模型加载")
+        保持模型加载 = kwargs.get("🔄 保持模型加载", False)
         开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
+        性能诊断 = kwargs.get("🧪 性能诊断", False)
         图像1 = kwargs.get("🖼️ 图像1")
         图像2 = kwargs.get("🖼️ 图像2")
         图像3 = kwargs.get("🖼️ 图像3")
@@ -879,9 +972,42 @@ class Qwen3VL_Chat:
             raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
 
         load_start = time.time()
-        self.load_model(模型名称, 量化级别, "auto")
+        self.load_model(模型名称, 量化级别, "auto", 注意力模式)
         load_time = time.time() - load_start
         effective_device = self.current_device
+        device_for_log = self.model_device or effective_device
+        if effective_device == "cpu" and torch.cuda.is_available():
+            print("⚠️ 当前在 CPU 推理；请检查 torch 是否为 CUDA 版本。")
+        if 性能诊断:
+            try:
+                import sys
+                model_dtype = None
+                try:
+                    model_dtype = str(next(self.model.parameters()).dtype)
+                except StopIteration:
+                    model_dtype = "unknown"
+                try:
+                    sdp_info = f"sdp_flash={torch.backends.cuda.flash_sdp_enabled()} sdp_mem_efficient={torch.backends.cuda.mem_efficient_sdp_enabled()} sdp_math={torch.backends.cuda.math_sdp_enabled()}"
+                except Exception:
+                    sdp_info = "sdp_info=unknown"
+                pv_shape = None
+                if "pixel_values" in model_inputs and torch.is_tensor(model_inputs["pixel_values"]):
+                    pv = model_inputs["pixel_values"]
+                    pv_shape = f"pixel_values={tuple(pv.shape)} {str(pv.dtype).replace('torch.', '')}"
+                else:
+                    pv_shape = "pixel_values=none"
+                py = sys.version.split()[0]
+                torch_info = f"torch={torch.__version__} cuda={torch.version.cuda} is_cuda={torch.cuda.is_available()}"
+                gpu_info = "gpu=none"
+                if torch.cuda.is_available():
+                    gpu_info = f"gpu={torch.cuda.get_device_name(0)} cap={torch.cuda.get_device_capability(0)}"
+                print(f"[PerfDiag] python={py} {torch_info}")
+                print(f"[PerfDiag] {gpu_info} {sdp_info}")
+                print(f"[PerfDiag] model_device={device_for_log} model_dtype={model_dtype} attn={self.current_attn_implementation}")
+                print(f"[PerfDiag] {pv_shape} max_side={最大长边}")
+                print(f"[PerfDiag] max_new_tokens={最大长度} do_sample=True")
+            except Exception:
+                pass
         
         # 处理系统角色定义，应用额外选项
         system_prompt = 系统角色定义.strip() if 系统角色定义 else ""
@@ -913,7 +1039,7 @@ class Qwen3VL_Chat:
             if image is not None:
                 user_content.append({
                     "type": "image",
-                    "image": self.image_processor.to_pil(image)
+                    "image": self.image_processor.to_pil(image, 最大长边)
                 })
         
         # 添加用户文本输入
@@ -963,7 +1089,7 @@ class Qwen3VL_Chat:
             stop_tokens.append(self.tokenizer.eot_id)
 
         # 检查是否有未识别的参数
-        remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️', '🚀'))}
+        remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '🧠', '🧪', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️', '🚀'))}
         if remaining_kwargs:
             print(f"[Qwen3VL_Chat] 未识别的参数已忽略: {', '.join(remaining_kwargs.keys())}")
 
@@ -979,7 +1105,16 @@ class Qwen3VL_Chat:
 
         # 生成文本
         gen_start = time.time()
-        outputs = self.model.generate(**model_inputs, **gen_kwargs)
+        if "cuda" in str(effective_device) and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        if self.current_attn_implementation == "sdpa" and "cuda" in str(effective_device) and torch.cuda.is_available() and hasattr(torch.backends.cuda, "sdp_kernel"):
+            with torch.inference_mode(), torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=True):
+                outputs = self.model.generate(**model_inputs, **gen_kwargs, use_cache=True)
+        else:
+            with torch.inference_mode():
+                outputs = self.model.generate(**model_inputs, **gen_kwargs, use_cache=True)
+        if "cuda" in str(effective_device) and torch.cuda.is_available():
+            torch.cuda.synchronize()
         gen_time = time.time() - gen_start
         
         input_ids_len = model_inputs["input_ids"].shape[1]
@@ -989,7 +1124,9 @@ class Qwen3VL_Chat:
         )
         
         total_time = time.time() - start_time
-        print(f"⏱️ 耗时统计: 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s | 总计 {total_time:.2f}s")
+        generated_tokens = int(outputs.shape[1] - input_ids_len) if hasattr(outputs, "shape") else 0
+        tps = (generated_tokens / gen_time) if gen_time > 0 else 0.0
+        print(f"⏱️ 耗时统计: 设备 {device_for_log} | 注意力 {self.current_attn_implementation} | 输入 {input_ids_len} | 输出 {generated_tokens} | 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s ({tps:.1f} tok/s) | 总计 {total_time:.2f}s")
         
         if not 保持模型加载:
             self.clear_model_resources()
