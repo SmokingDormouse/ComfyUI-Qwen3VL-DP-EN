@@ -182,12 +182,30 @@ def resolve_attn_implementation(attn_mode: str) -> str:
 
 class ImageProcessor:
     """图像处理器"""
-    def to_pil(self, image_tensor: torch.Tensor, max_side: int = 0) -> Image.Image:
+    def to_pil(self, image_tensor, max_side: int = 0) -> Image.Image:
         """将 ComfyUI 图像张量转换为 PIL Image"""
-        if image_tensor.dim() == 4:
+        if image_tensor is None:
+            return None
+
+        if isinstance(image_tensor, (list, tuple)) and len(image_tensor) > 0:
             image_tensor = image_tensor[0]
-        image_np = (image_tensor.cpu().numpy() * 255).astype(np.uint8)
-        img = Image.fromarray(image_np)
+
+        if isinstance(image_tensor, Image.Image):
+            img = image_tensor.copy()
+        elif torch.is_tensor(image_tensor):
+            if image_tensor.dim() == 4:
+                image_tensor = image_tensor[0]
+            image_np = (image_tensor.detach().cpu().numpy() * 255).astype(np.uint8)
+            img = Image.fromarray(image_np)
+        elif isinstance(image_tensor, np.ndarray):
+            arr = image_tensor
+            if arr.dtype != np.uint8:
+                arr = np.clip(arr, 0.0, 1.0)
+                arr = (arr * 255).astype(np.uint8)
+            img = Image.fromarray(arr)
+        else:
+            raise TypeError(f"Unsupported image type: {type(image_tensor)}")
+
         if max_side and max_side > 0:
             w, h = img.size
             if w > max_side or h > max_side:
