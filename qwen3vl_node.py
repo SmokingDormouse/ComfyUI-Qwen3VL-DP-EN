@@ -216,18 +216,18 @@ class ImageProcessor:
 class ModelDownloader:
     """Model downloader.
 
-    Storage path: `ComfyUI/models/prompt_generator/`
+    Storage path: `ComfyUI/models/llm/Qwen-VL/`
     """
     def __init__(self, configs):
         self.configs = configs
-        # Store models in the prompt_generator subfolder
-        self.models_dir = Path(folder_paths.models_dir) / "prompt_generator"
+        # Store models in the llm/Qwen-VL subfolder
+        self.models_dir = Path(folder_paths.models_dir) / "llm" / "Qwen-VL"
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
     def ensure_model_available(self, model_name):
         """Ensure the model is available; download it if missing.
 
-        The model is downloaded to `ComfyUI/models/prompt_generator/`.
+        The model is downloaded to `ComfyUI/models/llm/Qwen-VL/`.
         If it already exists, it will be reused (no re-download).
         Supports both HuggingFace and ModelScope sources.
         """
