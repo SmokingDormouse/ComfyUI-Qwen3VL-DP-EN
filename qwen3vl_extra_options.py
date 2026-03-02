@@ -1,230 +1,230 @@
 """
-Qwen3VL 额外选项节点
-用于配置Qwen3VL的高级描述选项，可以连接到批量打标节点
+Qwen3VL Extra Options Node
+Used for configuring Qwen3VL's advanced description options, can be connected to batch captioning node
 
-功能特点：
-- 提供Qwen3VL的所有高级描述选项配置
-- 输出格式化的选项字典，可连接到其他节点
-- 模块化设计，保持主节点的简洁性
-- 支持精细化控制图像描述的生成内容和风格
+Features:
+- Provides all advanced description option configurations for Qwen3VL
+- Outputs formatted options dictionary that can be connected to other nodes
+- Modular design, maintains simplicity of the main node
+- Supports fine-grained control over image description content and style
 """
 
 class Qwen3VL_ExtraOptions:
-    """Qwen3VL 额外选项配置节点"""
+    """Qwen3VL Extra Options Configuration Node"""
     
     @classmethod
     def INPUT_TYPES(cls):
-        """定义Qwen3VL额外选项的输入类型"""
+        """Define input types for Qwen3VL extra options"""
         return {
             "required": {},
             "optional": {
-                # 人物信息控制
-                "👤 包含人物信息": ("BOOLEAN", {
+                # Character information control
+                "👤 Include Character Info": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "如果图像中有人物/角色，包含相关信息（姓名等）"
+                    "tooltip": "If there are people/characters in the image, include relevant information (name, etc.)"
                 }),
-                "🚫 排除不可改变特征": ("BOOLEAN", {
+                "🚫 Exclude Immutable Features": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "不包含无法改变的人物特征信息（如种族、性别等），但仍包含可改变的属性（如发型）"
-                }),
-                
-                # 技术细节
-                "💡 包含光照信息": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "包含关于光照的信息"
-                }),
-                "📐 包含相机角度": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "包含相机角度信息"
-                }),
-                "📷 包含相机详情": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "如果是照片，必须包含使用的相机信息和详细信息（如光圈、快门速度、ISO等）"
-                }),
-                "💡 提及光源": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "如果适用，提及可能使用的人工或自然光源"
+                    "tooltip": "Don't include immutable character features (such as race, gender), but still include changeable attributes (such as hairstyle)"
                 }),
                 
-                # 图像质量评估
-                "🎨 包含艺术质量": ("BOOLEAN", {
+                # Technical details
+                "💡 Include Lighting Info": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "必须包含关于图像美学/艺术质量的信息，从非常低到非常高"
+                    "tooltip": "Include information about lighting"
                 }),
-                "📊 包含构图信息": ("BOOLEAN", {
+                "📐 Include Camera Angle": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "包含图像构图信息，如三分法、引导线、对称性等"
+                    "tooltip": "Include camera angle information"
                 }),
-                "🌈 包含景深信息": ("BOOLEAN", {
+                "📷 Include Camera Details": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "指定景深和背景是否对焦或模糊"
+                    "tooltip": "If it's a photo, must include camera information and details (such as aperture, shutter speed, ISO, etc.)"
                 }),
-                
-                # 内容过滤
-                "🔍 排除性感内容": ("BOOLEAN", {
+                "💡 Mention Light Sources": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "不包含任何性感或暗示性内容"
-                }),
-                "📝 不提及文字": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "不提及图像中的任何文字"
-                }),
-                "🔇 不提及分辨率": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": "不提及图像的分辨率"
+                    "tooltip": "If applicable, mention artificial or natural light sources that may have been used"
                 }),
                 
-                # 技术信息
-                "🏷️ 包含水印信息": ("BOOLEAN", {
+                # Image quality assessment
+                "🎨 Include Art Quality": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "包含图像是否有水印的信息"
+                    "tooltip": "Must include information about the image's aesthetic/artistic quality, from very low to very high"
                 }),
-                "🖼️ 包含JPEG伪影": ("BOOLEAN", {
+                "📊 Include Composition Info": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "包含图像是否有JPEG压缩伪影的信息"
+                    "tooltip": "Include image composition information, such as rule of thirds, leading lines, symmetry, etc."
+                }),
+                "🌈 Include Depth of Field": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Specify depth of field and whether the background is in focus or blurred"
                 }),
                 
-                # 描述风格控制
-                "🌍 不使用模糊语言": ("BOOLEAN", {
+                # Content filtering
+                "🔍 Exclude Suggestive Content": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "不使用模糊的语言"
+                    "tooltip": "Don't include any suggestive or provocative content"
                 }),
-                "⭐ 描述重要元素": ("BOOLEAN", {
+                "📝 Don't Mention Text": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "仅描述图像中最重要的元素"
+                    "tooltip": "Don't mention any text in the image"
                 }),
-                "🔒 包含安全性": ("BOOLEAN", {
+                "🔇 Don't Mention Resolution": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "包含图像是否安全、暗示性或不安全的信息"
+                    "tooltip": "Don't mention the image resolution"
+                }),
+                
+                # Technical information
+                "🏷️ Include Watermark Info": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Include information about whether the image has a watermark"
+                }),
+                "🖼️ Include JPEG Artifacts": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Include information about whether the image has JPEG compression artifacts"
+                }),
+                
+                # Description style control
+                "🌍 Don't Use Vague Language": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Don't use vague language"
+                }),
+                "⭐ Describe Important Elements": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Only describe the most important elements in the image"
+                }),
+                "🔒 Include Safety Rating": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Include information about whether the image is safe, suggestive, or unsafe"
                 }),
             }
         }
     
     RETURN_TYPES = ("QWEN3VL_EXTRA_OPTIONS",)
-    RETURN_NAMES = ("Qwen3VL额外选项",)
+    RETURN_NAMES = ("Qwen3VL Extra Options",)
     FUNCTION = "create_options"
-    CATEGORY = "🍭大炮-Qwen3VL"
+    CATEGORY = "Qwen3VL-DP"
     
     def create_options(self, **kwargs):
         """
-        创建Qwen3VL额外选项字典
+        Create Qwen3VL extra options dictionary
         
         Returns:
-            包含所有选项的字典
+            Dictionary containing all options
         """
-        # 提取所有选项参数
+        # Extract all option parameters
         options = {
-            "包含人物信息": kwargs.get("👤 包含人物信息", False),
-            "排除不可改变特征": kwargs.get("🚫 排除不可改变特征", False),
-            "包含光照信息": kwargs.get("💡 包含光照信息", False),
-            "包含相机角度": kwargs.get("📐 包含相机角度", False),
-            "包含相机详情": kwargs.get("📷 包含相机详情", False),
-            "提及光源": kwargs.get("💡 提及光源", False),
-            "包含艺术质量": kwargs.get("🎨 包含艺术质量", False),
-            "包含构图信息": kwargs.get("📊 包含构图信息", False),
-            "包含景深信息": kwargs.get("🌈 包含景深信息", False),
-            "排除性感内容": kwargs.get("🔍 排除性感内容", False),
-            "不提及文字": kwargs.get("📝 不提及文字", False),
-            "不提及分辨率": kwargs.get("🔇 不提及分辨率", False),
-            "包含水印信息": kwargs.get("🏷️ 包含水印信息", False),
-            "包含JPEG伪影": kwargs.get("🖼️ 包含JPEG伪影", False),
-            "不使用模糊语言": kwargs.get("🌍 不使用模糊语言", False),
-            "描述重要元素": kwargs.get("⭐ 描述重要元素", False),
-            "包含安全性": kwargs.get("🔒 包含安全性", False),
+            "Include Character Info": kwargs.get("👤 Include Character Info", False),
+            "Exclude Immutable Features": kwargs.get("🚫 Exclude Immutable Features", False),
+            "Include Lighting Info": kwargs.get("💡 Include Lighting Info", False),
+            "Include Camera Angle": kwargs.get("📐 Include Camera Angle", False),
+            "Include Camera Details": kwargs.get("📷 Include Camera Details", False),
+            "Mention Light Sources": kwargs.get("💡 Mention Light Sources", False),
+            "Include Art Quality": kwargs.get("🎨 Include Art Quality", False),
+            "Include Composition Info": kwargs.get("📊 Include Composition Info", False),
+            "Include Depth of Field": kwargs.get("🌈 Include Depth of Field", False),
+            "Exclude Suggestive Content": kwargs.get("🔍 Exclude Suggestive Content", False),
+            "Don't Mention Text": kwargs.get("📝 Don't Mention Text", False),
+            "Don't Mention Resolution": kwargs.get("🔇 Don't Mention Resolution", False),
+            "Include Watermark Info": kwargs.get("🏷️ Include Watermark Info", False),
+            "Include JPEG Artifacts": kwargs.get("🖼️ Include JPEG Artifacts", False),
+            "Don't Use Vague Language": kwargs.get("🌍 Don't Use Vague Language", False),
+            "Describe Important Elements": kwargs.get("⭐ Describe Important Elements", False),
+            "Include Safety Rating": kwargs.get("🔒 Include Safety Rating", False),
         }
         
-        # 统计启用的选项
+        # Count enabled options
         enabled_count = sum(1 for value in options.values() if value)
         
-        print(f"🎯 Qwen3VL额外选项配置完成:")
-        print(f"   启用选项数量: {enabled_count}")
+        print(f"🎯 Qwen3VL Extra Options configuration complete:")
+        print(f"   Enabled options count: {enabled_count}")
         if enabled_count > 0:
             enabled_options = [key for key, value in options.items() if value]
-            print(f"   启用的选项: {', '.join(enabled_options)}")
+            print(f"   Enabled options: {', '.join(enabled_options)}")
         
         return (options,)
 
     @staticmethod
     def build_enhanced_prompt(base_prompt: str, options: dict) -> str:
         """
-        根据Qwen3VL额外选项构建增强的提示词
+        Build enhanced prompt based on Qwen3VL extra options
         
         Args:
-            base_prompt: 基础提示词
-            options: Qwen3VL额外选项字典
+            base_prompt: Base prompt
+            options: Qwen3VL extra options dictionary
             
         Returns:
-            增强后的提示词
+            Enhanced prompt
         """
         enhanced_instructions = []
         
-        # 根据选项添加具体指令
-        if options.get("包含人物信息", False):
-            enhanced_instructions.append("如果图像中有人物/角色，请包含相关信息（如姓名等）。")
+        # Add specific instructions based on options
+        if options.get("Include Character Info", False):
+            enhanced_instructions.append("If there are people/characters in the image, please include relevant information (such as name, etc.).")
         
-        if options.get("排除不可改变特征", False):
-            enhanced_instructions.append("不要包含无法改变的人物特征信息（如种族、性别等），但可以包含可改变的属性（如发型）。")
+        if options.get("Exclude Immutable Features", False):
+            enhanced_instructions.append("Don't include immutable character features (such as race, gender), but you can include changeable attributes (such as hairstyle).")
         
-        if options.get("包含光照信息", False):
-            enhanced_instructions.append("请描述图像的光照情况。")
+        if options.get("Include Lighting Info", False):
+            enhanced_instructions.append("Please describe the lighting conditions of the image.")
         
-        if options.get("包含相机角度", False):
-            enhanced_instructions.append("请描述相机角度信息。")
+        if options.get("Include Camera Angle", False):
+            enhanced_instructions.append("Please describe the camera angle information.")
         
-        if options.get("包含相机详情", False):
-            enhanced_instructions.append("如果是照片，请包含使用的相机信息和详细参数（如光圈、快门速度、ISO等）。")
+        if options.get("Include Camera Details", False):
+            enhanced_instructions.append("If it's a photo, please include camera information and detailed parameters (such as aperture, shutter speed, ISO, etc.).")
         
-        if options.get("提及光源", False):
-            enhanced_instructions.append("如果适用，请提及可能使用的人工或自然光源。")
+        if options.get("Mention Light Sources", False):
+            enhanced_instructions.append("If applicable, please mention artificial or natural light sources that may have been used.")
         
-        if options.get("包含艺术质量", False):
-            enhanced_instructions.append("请评价图像的美学/艺术质量（从非常低到非常高）。")
+        if options.get("Include Art Quality", False):
+            enhanced_instructions.append("Please rate the aesthetic/artistic quality of the image (from very low to very high).")
         
-        if options.get("包含构图信息", False):
-            enhanced_instructions.append("请描述图像构图信息，如三分法、引导线、对称性等。")
+        if options.get("Include Composition Info", False):
+            enhanced_instructions.append("Please describe the image composition, such as rule of thirds, leading lines, symmetry, etc.")
         
-        if options.get("包含景深信息", False):
-            enhanced_instructions.append("请描述景深和背景是否对焦或模糊。")
+        if options.get("Include Depth of Field", False):
+            enhanced_instructions.append("Please describe the depth of field and whether the background is in focus or blurred.")
         
-        if options.get("排除性感内容", False):
-            enhanced_instructions.append("不要包含任何性感或暗示性内容的描述。")
+        if options.get("Exclude Suggestive Content", False):
+            enhanced_instructions.append("Don't include any description of suggestive or provocative content.")
         
-        if options.get("不提及文字", False):
-            enhanced_instructions.append("不要提及图像中的任何文字内容。")
+        if options.get("Don't Mention Text", False):
+            enhanced_instructions.append("Don't mention any text content in the image.")
         
-        if options.get("不提及分辨率", False):
-            enhanced_instructions.append("不要提及图像的分辨率。")
+        if options.get("Don't Mention Resolution", False):
+            enhanced_instructions.append("Don't mention the image resolution.")
         
-        if options.get("包含水印信息", False):
-            enhanced_instructions.append("请说明图像是否有水印。")
+        if options.get("Include Watermark Info", False):
+            enhanced_instructions.append("Please indicate whether the image has a watermark.")
         
-        if options.get("包含JPEG伪影", False):
-            enhanced_instructions.append("请说明图像是否有JPEG压缩伪影。")
+        if options.get("Include JPEG Artifacts", False):
+            enhanced_instructions.append("Please indicate whether the image has JPEG compression artifacts.")
         
-        if options.get("不使用模糊语言", False):
-            enhanced_instructions.append("请使用具体、准确的语言，避免模糊的表达。")
+        if options.get("Don't Use Vague Language", False):
+            enhanced_instructions.append("Please use specific, accurate language and avoid vague expressions.")
         
-        if options.get("描述重要元素", False):
-            enhanced_instructions.append("请重点描述图像中最重要的元素。")
+        if options.get("Describe Important Elements", False):
+            enhanced_instructions.append("Please focus on describing the most important elements in the image.")
         
-        if options.get("包含安全性", False):
-            enhanced_instructions.append("请评价图像是否安全、暗示性或不安全。")
+        if options.get("Include Safety Rating", False):
+            enhanced_instructions.append("Please rate whether the image is safe, suggestive, or unsafe.")
         
-        # 构建最终的提示词
+        # Build final prompt
         if enhanced_instructions:
             instructions_text = "\n".join([f"- {instruction}" for instruction in enhanced_instructions])
-            enhanced_prompt = f"{base_prompt}\n\n请遵循以下额外要求：\n{instructions_text}"
+            enhanced_prompt = f"{base_prompt}\n\nPlease follow these additional requirements:\n{instructions_text}"
         else:
             enhanced_prompt = base_prompt
         
         return enhanced_prompt
 
 
-# 节点注册
+# Node registration
 NODE_CLASS_MAPPINGS = {
     "Qwen3VL_ExtraOptions": Qwen3VL_ExtraOptions,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Qwen3VL_ExtraOptions": "🍭大炮-Qwen3VL额外选项@炮老师的小课堂",
+    "Qwen3VL_ExtraOptions": "Qwen3VL Extra Options",
 }

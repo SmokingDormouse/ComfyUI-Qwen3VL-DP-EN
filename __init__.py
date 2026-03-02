@@ -2,7 +2,7 @@ import importlib.util
 import os
 import sys
 
-# 获取当前脚本目录
+# Get the directory of the current script.
 current_dir = os.path.dirname(__file__)
 sys.path.insert(0, current_dir)
 
@@ -10,7 +10,7 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 def load_modules_from_directory(directory):
-    """从目录加载所有Python模块"""
+    """Load all Python modules from a directory"""
     for file in os.listdir(directory):
         if file.endswith(".py"):
             file_path = os.path.join(directory, file)
@@ -29,11 +29,11 @@ def load_modules_from_directory(directory):
                 if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):
                     NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
             except Exception as e:
-                print(f"加载模块 {module_name} 时出错: {e}")
+                print(f"Error loading module {module_name}: {e}")
 
 load_modules_from_directory(current_dir)
 
-# 按显示名称排序
+# Sort by display name
 NODE_CLASS_MAPPINGS = dict(sorted(
     NODE_CLASS_MAPPINGS.items(),
     key=lambda x: NODE_DISPLAY_NAME_MAPPINGS.get(x[0], x[0])

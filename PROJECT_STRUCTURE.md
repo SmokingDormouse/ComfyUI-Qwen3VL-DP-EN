@@ -1,92 +1,93 @@
-# 🗂️ 项目文件结构
+# 🗂️ Project File Structure
 
-## 📁 核心文件
+## 📁 Core Files
 
-### 🔧 配置文件
-- `__init__.py` - 节点自动加载和注册
-- `config.json` - 模型配置和预设提示词
-- `requirements.txt` - Python依赖包列表
+### 🔧 Configuration Files
+- `__init__.py` - Automatic node loading and registration
+- `config.json` - Model configuration and preset prompts
+- `requirements.txt` - Python dependency package list
 
-### 🎮 节点文件
-- `qwen3vl_node.py` - 核心Qwen3VL节点（简单版和高级版）
-- `qwen3vl_batch_caption.py` - 批量打标节点
-- `qwen3vl_compare_caption.py` - 对比打标节点
-- `qwen3vl_extra_options.py` - 额外选项配置节点
+### 🎮 Node Files
+- `qwen3vl_node.py` - Core Qwen3VL nodes (Simple and Advanced versions)
+- `qwen3vl_batch_caption.py` - Batch captioning node
+- `qwen3vl_compare_caption.py` - Comparison captioning node
+- `qwen3vl_extra_options.py` - Extra options configuration node
 
-### 📚 文档文件
-- `README.md` - 中文项目说明文档
-- `README_EN.md` - 英文项目说明文档
-- `PROJECT_STRUCTURE.md` - 项目文件结构说明
+### 📚 Documentation Files
+- `README.md` - Chinese project documentation
+- `README_EN.md` - English project documentation
+- `PROJECT_STRUCTURE.md` - Project file structure documentation
 
-## 🎯 节点功能映射
+## 🎯 Node Function Mapping
 
-### 主要节点
-1. **🍭大炮-Qwen3VL (简单)** → `qwen3vl_node.py:Qwen3VL_Simple`
-2. **🍭大炮-Qwen3VL (高级)** → `qwen3vl_node.py:Qwen3VL_Advanced`
+### Main Nodes
+1. **🍭Dapao-Qwen3VL (Simple)** → `qwen3vl_node.py:Qwen3VL_Simple`
+2. **🍭Dapao-Qwen3VL (Advanced)** → `qwen3vl_node.py:Qwen3VL_Advanced`
 
-### 批量处理节点
-3. **🍭大炮-Qwen3VL批量打标** → `qwen3vl_batch_caption.py:Qwen3VL_Batch_Caption`
-4. **🍭大炮-Qwen3VL对比打标** → `qwen3vl_compare_caption.py:Qwen3VL_Compare_Caption`
+### Batch Processing Nodes
+3. **🍭Dapao-Qwen3VL Batch Caption** → `qwen3vl_batch_caption.py:Qwen3VL_Batch_Caption`
+4. **🍭Dapao-Qwen3VL Compare Caption** → `qwen3vl_compare_caption.py:Qwen3VL_Compare_Caption`
 
-### 配置节点
-5. **🍭大炮-Qwen3VL额外选项** → `qwen3vl_extra_options.py:Qwen3VL_ExtraOptions`
+### Configuration Nodes
+5. **🍭Dapao-Qwen3VL Extra Options** → `qwen3vl_extra_options.py:Qwen3VL_ExtraOptions`
 
-## 📊 文件大小统计
+## 📊 File Size Statistics
 
-| 文件名 | 大小 | 功能描述 |
-|--------|------|----------|
-| `qwen3vl_node.py` | ~33KB | 核心模型处理逻辑 |
-| `qwen3vl_compare_caption.py` | ~19KB | 对比打标功能 |
-| `qwen3vl_batch_caption.py` | ~18KB | 批量打标功能 |
-| `README.md` | ~12KB | 中文文档 |
-| `qwen3vl_extra_options.py` | ~10KB | 额外选项配置 |
-| `README_EN.md` | ~9KB | 英文文档 |
-| `config.json` | ~6KB | 配置文件 |
-| `__init__.py` | ~2KB | 初始化文件 |
-| `requirements.txt` | ~0.4KB | 依赖列表 |
+| Filename | Size | Function Description |
+|----------|------|----------------------|
+| `qwen3vl_node.py` | ~33KB | Core model processing logic |
+| `qwen3vl_compare_caption.py` | ~19KB | Comparison captioning functionality |
+| `qwen3vl_batch_caption.py` | ~18KB | Batch captioning functionality |
+| `README.md` | ~12KB | Chinese documentation |
+| `qwen3vl_extra_options.py` | ~10KB | Extra options configuration |
+| `README_EN.md` | ~9KB | English documentation |
+| `config.json` | ~6KB | Configuration file |
+| `__init__.py` | ~2KB | Initialization file |
+| `requirements.txt` | ~0.4KB | Dependency list |
 
-## 🔗 依赖关系
+## 🔗 Dependency Relationships
 
 ```
-qwen3vl_node.py (核心)
+qwen3vl_node.py (Core)
     ↑
-    ├── qwen3vl_batch_caption.py (依赖核心)
-    ├── qwen3vl_compare_caption.py (依赖核心)
-    └── qwen3vl_extra_options.py (独立，被批量打标调用)
+    ├── qwen3vl_batch_caption.py (Depends on core)
+    ├── qwen3vl_compare_caption.py (Depends on core)
+    └── qwen3vl_extra_options.py (Independent, called by batch captioning)
 ```
 
-## 🎨 代码架构特点
+## 🎨 Code Architecture Features
 
-### 模块化设计
-- **核心分离**: 主要模型逻辑在 `qwen3vl_node.py`
-- **功能扩展**: 批量和对比功能作为独立模块
-- **配置解耦**: 额外选项作为可选模块
+### Modular Design
+- **Core Separation**: Main model logic in `qwen3vl_node.py`
+- **Feature Extension**: Batch and comparison features as independent modules
+- **Configuration Decoupling**: Extra options as optional module
 
-### 代码复用
-- 批量打标和对比打标都复用核心节点的 `Qwen3VL_Advanced` 类
-- 统一的错误处理和进度显示机制
-- 共享的模型配置和提示词系统
+### Code Reuse
+- Both batch captioning and comparison captioning reuse the `Qwen3VL_Advanced` class from the core node
+- Unified error handling and progress display mechanism
+- Shared model configuration and prompt system
 
-### 中文友好
-- 全中文参数名（使用emoji图标）
-- 详细的中文注释和文档字符串
-- 面向中文用户的错误提示和日志
+### Chinese-Friendly
+- All Chinese parameter names (with emoji icons)
+- Detailed Chinese comments and docstrings
+- Error messages and logs oriented toward Chinese users
 
-## 🚀 部署清单
+## 🚀 Deployment Checklist
 
-发布前确认以下文件：
-- [x] `qwen3vl_node.py` - 核心功能
-- [x] `qwen3vl_batch_caption.py` - 批量打标
-- [x] `qwen3vl_compare_caption.py` - 对比打标  
-- [x] `qwen3vl_extra_options.py` - 额外选项
-- [x] `__init__.py` - 节点注册
-- [x] `config.json` - 配置文件
-- [x] `requirements.txt` - 依赖列表
-- [x] `README.md` - 中文文档
-- [x] `README_EN.md` - 英文文档
-- [x] `PROJECT_STRUCTURE.md` - 项目结构说明
+Confirm the following files before release:
+- [x] `qwen3vl_node.py` - Core functionality
+- [x] `qwen3vl_batch_caption.py` - Batch captioning
+- [x] `qwen3vl_compare_caption.py` - Comparison captioning
+- [x] `qwen3vl_extra_options.py` - Extra options
+- [x] `__init__.py` - Node registration
+- [x] `config.json` - Configuration file
+- [x] `requirements.txt` - Dependency list
+- [x] `README.md` - Chinese documentation
+- [x] `README_EN.md` - English documentation
+- [x] `PROJECT_STRUCTURE.md` - Project structure documentation
 
-## 📝 版本信息
-- **当前版本**: v2.0.0
-- **发布日期**: 2025-11-14
-- **主要特性**: 批量打标、对比打标、模块化设计
+## 📝 Version Information
+- **Current Version**: v2.0.0
+- **Release Date**: 2025-11-14
+- **Main Features**: Batch captioning, comparison captioning, modular design
+```
