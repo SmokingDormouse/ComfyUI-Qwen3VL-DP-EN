@@ -1,15 +1,14 @@
 [project]
-name = "comfyui-dapao-tool"
-description = "🍭 大炮-Qwen3VL ComfyUI 自定义节点集合，集成了阿里云 Qwen 团队开发的 Qwen3-VL 多模态大语言模型系列。"
+name = "comfyui-qwen3vl-dp-en-videochat"
+description = "🍭 ComfyUI custom node pack integrating Alibaba Qwen team's Qwen3-VL multimodal LLMs, with English UI + Video Chat support."
 version = "1.0.9"
 license = { file = "LICENSE" }
 
 [project.urls]
-Repository = "https://github.com/paolaoshi/ComfyUI-Qwen3VL-DP"
+Repository = "https://github.com/SmokingDormouse/ComfyUI-Qwen3VL-DP-EN-VideoChat"
 
 [tool.comfy]
-PublisherId = "paolaoshi"
-DisplayName = "大炮-Qwen3VL"
+PublisherId = "SmokingDormouse"
+DisplayName = "Qwen3VL-DP (EN + VideoChat)"
 Icon = ""
 Banner = ""
-

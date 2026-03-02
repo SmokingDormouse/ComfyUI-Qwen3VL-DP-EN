@@ -16,14 +16,14 @@ from huggingface_hub import snapshot_download as hf_snapshot_download
 import folder_paths
 import gc
 
-# 尝试导入 ModelScope，如果不存在则使用 HuggingFace
+# Try to import ModelScope; fall back to HuggingFace if not available
 try:
     from modelscope.hub.snapshot_download import snapshot_download as ms_snapshot_download
     MODELSCOPE_AVAILABLE = True
 except ImportError:
     ms_snapshot_download = None
     MODELSCOPE_AVAILABLE = False
-    print("[Qwen3VL] ⚠️ ModelScope 未安装，ModelScope 模型将无法下载。请运行: pip install modelscope")
+    print("[Qwen3VL] ⚠️ ModelScope is not installed. ModelScope models cannot be downloaded. Run: pip install modelscope")
 
 NODE_DIR = Path(__file__).parent
 CONFIG_PATH = NODE_DIR / "config.json"
@@ -31,45 +31,45 @@ MODEL_CONFIGS = {}
 SYSTEM_PROMPTS = {}
 
 def load_model_configs():
-    """加载模型配置文件"""
+    """Load model configuration file."""
     global MODEL_CONFIGS, SYSTEM_PROMPTS
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             MODEL_CONFIGS = json.load(f)
             SYSTEM_PROMPTS = MODEL_CONFIGS.get("_system_prompts", {})
     except FileNotFoundError:
-        print(f"错误: 配置文件未找到 {CONFIG_PATH}")
+        print(f"Error: config file not found: {CONFIG_PATH}")
         MODEL_CONFIGS, SYSTEM_PROMPTS = {}, {}
     except json.JSONDecodeError:
-        print(f"错误: 配置文件解析失败")
+        print("Error: failed to parse config file")
         MODEL_CONFIGS, SYSTEM_PROMPTS = {}, {}
 
-    # 加载用户自定义模型配置
+    # Load user-defined custom model configurations
     custom_path = NODE_DIR / "custom_models.json"
     if custom_path.exists():
         try:
             with open(custom_path, "r", encoding="utf-8") as f:
                 custom_data = json.load(f) or {}
-            
+
             user_models = custom_data.get("hf_models", {}) or custom_data.get("models", {})
-            
+
             if user_models:
                 MODEL_CONFIGS.update(user_models)
-                print(f"[Qwen3VL] ✅ 已加载 {len(user_models)} 个自定义模型")
+                print(f"[Qwen3VL] ✅ Loaded {len(user_models)} custom model(s)")
             else:
-                print("[Qwen3VL] ⚠️ 找到 custom_models.json 但没有有效的模型条目")
+                print("[Qwen3VL] ⚠️ Found custom_models.json but it contains no valid model entries")
         except Exception as e:
-            print(f"[Qwen3VL] ⚠️ 加载 custom_models.json 失败 → {e}")
+            print(f"[Qwen3VL] ⚠️ Failed to load custom_models.json → {e}")
     else:
-        print("[Qwen3VL] ℹ️ 未找到 custom_models.json，跳过自定义模型")
+        print("[Qwen3VL] ℹ️ custom_models.json not found; skipping custom models")
 
 if not MODEL_CONFIGS:
     load_model_configs()
 
 class Quantization(str, Enum):
-    """量化选项枚举"""
-    Q4_BIT = "4-bit (节省显存)"
-    Q8_BIT = "8-bit (平衡)"
+    """Quantization options enum."""
+    Q4_BIT = "4-bit (lower VRAM)"
+    Q8_BIT = "8-bit (balanced)"
     NONE = "None (FP16)"
     
     @classmethod
@@ -77,11 +77,11 @@ class Quantization(str, Enum):
         return [item.value for item in cls]
 
 def get_model_info(model_name: str) -> dict:
-    """获取模型信息"""
+    """Get model info."""
     return MODEL_CONFIGS.get(model_name, {})
 
 def get_device_info() -> dict:
-    """获取设备信息"""
+    """Get device info."""
     gpu_info = {}
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
@@ -117,7 +117,7 @@ def get_device_info() -> dict:
         if sys_mem_info["total"] < 16:
             device_info.update({
                 "memory_sufficient": False,
-                "warning_message": "Apple Silicon 内存小于 16GB，性能可能受影响"
+                "warning_message": "Apple Silicon memory is below 16GB; performance may be impacted"
             })
     elif gpu_info["available"]:
         device_info.update({
@@ -127,13 +127,13 @@ def get_device_info() -> dict:
         if gpu_info["total_memory"] < 8:
             device_info.update({
                 "memory_sufficient": False,
-                "warning_message": "GPU 显存小于 8GB，性能可能下降"
+                "warning_message": "GPU VRAM is below 8GB; performance may degrade"
             })
     
     return device_info
 
 def check_memory_requirements(model_name: str, quantization: str, device_info: dict) -> str:
-    """检查内存需求并自动调整量化级别"""
+    """Check memory requirements and auto-adjust quantization."""
     model_info = get_model_info(model_name)
     vram_req = model_info.get("vram_requirement", {})
     
@@ -149,20 +149,20 @@ def check_memory_requirements(model_name: str, quantization: str, device_info: d
     
     required_mem = base_memory * (1.5 if use_cpu_mps else 1.0)
     available_mem = device_info["system_memory"]["available"] if use_cpu_mps else device_info["gpu"]["free_memory"]
-    mem_type = "系统内存" if use_cpu_mps else "GPU显存"
+    mem_type = "System RAM" if use_cpu_mps else "GPU VRAM"
 
     if required_mem * 1.2 > available_mem:
-        print(f"警告: {mem_type} 不足 ({available_mem:.2f}GB 可用)。降低量化级别...")
+        print(f"Warning: insufficient {mem_type} ({available_mem:.2f}GB available). Lowering quantization...")
         if quantization == Quantization.NONE:
             return Quantization.Q8_BIT
         if quantization == Quantization.Q8_BIT:
             return Quantization.Q4_BIT
-        raise RuntimeError(f"{mem_type} 不足，即使使用 4-bit 量化也无法运行")
+        raise RuntimeError(f"Insufficient {mem_type}; cannot run even with 4-bit quantization")
     
     return quantization
 
 def check_flash_attention() -> bool:
-    """检查是否支持 Flash Attention 2"""
+    """Check whether Flash Attention 2 is supported."""
     try:
         import flash_attn
         if torch.cuda.is_available():
@@ -176,14 +176,14 @@ def resolve_attn_implementation(attn_mode: str) -> str:
     if attn_mode == "Flash Attention 2":
         if check_flash_attention():
             return "flash_attention_2"
-        print("⚠️ Flash Attention 2 不可用（未安装或环境不支持），已改用 SDPA")
+        print("⚠️ Flash Attention 2 is unavailable (not installed or unsupported); falling back to SDPA")
         return "sdpa"
     return "sdpa"
 
 class ImageProcessor:
-    """图像处理器"""
+    """Image processor."""
     def to_pil(self, image_tensor, max_side: int = 0) -> Image.Image:
-        """将 ComfyUI 图像张量转换为 PIL Image"""
+        """Convert a ComfyUI image tensor to a PIL Image."""
         if image_tensor is None:
             return None
 
@@ -214,64 +214,64 @@ class ImageProcessor:
         return img
 
 class ModelDownloader:
-    """模型下载器
-    
-    模型存储路径：ComfyUI/models/prompt_generator/
+    """Model downloader.
+
+    Storage path: `ComfyUI/models/prompt_generator/`
     """
     def __init__(self, configs):
         self.configs = configs
-        # 修改模型存储路径为 prompt_generator 文件夹
+        # Store models in the prompt_generator subfolder
         self.models_dir = Path(folder_paths.models_dir) / "prompt_generator"
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
     def ensure_model_available(self, model_name):
-        """确保模型可用，如果不存在则下载
-        
-        模型会直接下载到 ComfyUI/models/prompt_generator/ 目录
-        如果模型已存在，则直接使用，不会重复下载
-        支持 HuggingFace 和 ModelScope 两种来源
+        """Ensure the model is available; download it if missing.
+
+        The model is downloaded to `ComfyUI/models/prompt_generator/`.
+        If it already exists, it will be reused (no re-download).
+        Supports both HuggingFace and ModelScope sources.
         """
         model_info = self.configs.get(model_name)
         if not model_info:
-            raise ValueError(f"模型 '{model_name}' 未在配置中找到")
+            raise ValueError(f"Model '{model_name}' not found in config")
 
         repo_id = model_info['repo_id']
-        source = model_info.get('source', 'huggingface')  # 默认使用 HuggingFace
+        source = model_info.get('source', 'huggingface')  # Default to HuggingFace
         model_folder_name = repo_id.split('/')[-1]
         model_path = self.models_dir / model_folder_name
         
-        # 检查模型是否已完整下载（检查关键文件是否存在）
+        # Check whether the model has already been fully downloaded
         config_file = model_path / "config.json"
         model_file = model_path / "model.safetensors"
-        # 有些模型使用分片存储
+        # Some models use sharded storage
         model_index = model_path / "model.safetensors.index.json"
         
         if model_path.exists() and config_file.exists():
-            # 检查模型文件是否存在（完整模型或分片模型）
+            # Check for model files (full model or sharded model)
             if model_file.exists() or model_index.exists():
-                print(f"✅ 模型 '{model_name}' 已存在于 {model_path}")
-                print(f"📁 模型路径: {model_path}")
+                print(f"✅ Model '{model_name}' already exists at {model_path}")
+                print(f"📁 Model path: {model_path}")
                 return str(model_path)
             else:
-                print(f"⚠️ 模型目录存在但文件不完整，将重新下载...")
+                print("⚠️ Model folder exists but files are incomplete; re-downloading...")
         
-        # 检查 ModelScope 模型是否需要安装依赖
+        # Check whether the ModelScope package is installed
         if source == 'modelscope' and not MODELSCOPE_AVAILABLE:
             raise RuntimeError(
-                f"模型 '{model_name}' 来自 ModelScope，但 ModelScope 库未安装。\n"
-                f"请运行以下命令安装：\n"
-                f"pip install modelscope\n"
-                f"或者使用 HuggingFace 镜像站手动下载模型到: {model_path}"
+                f"Model '{model_name}' is from ModelScope, but the ModelScope package is not installed.\n"
+                "Install it with:\n"
+                "pip install modelscope\n"
+                f"Or manually download the model to: {model_path}"
             )
         
-        print(f"📥 正在从 {source.upper()} 下载模型 '{model_name}' 到 {model_path}...")
-        print(f"📁 目标路径: {model_path}")
-        print("⏳ 提示：首次下载可能需要较长时间，请耐心等待...")
+        print(f"📥 Downloading model '{model_name}' from {source.upper()} to {model_path}...")
+        print(f"📁 Target path: {model_path}")
+        print("⏳ Tip: the first download can take a while; please be patient...")
         
-        # 创建模型目录
+        # Create model directory
         model_path.mkdir(parents=True, exist_ok=True)
         
-        # 根据来源选择下载函数
+        # Select download function based on source
         if source == 'modelscope':
             snapshot_download_func = ms_snapshot_download
             download_kwargs = {
@@ -292,38 +292,38 @@ class ModelDownloader:
             }
             source_url = f"https://huggingface.co/{repo_id}"
         
-        # 添加重试机制，解决网络连接问题
+        # Retry loop to reduce transient network issues
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 downloaded_path = snapshot_download_func(**download_kwargs)
-                print(f"✅ 模型 '{model_name}' 下载完成！")
-                print(f"📁 模型已保存到: {model_path}")
+                print(f"✅ Model '{model_name}' downloaded successfully!")
+                print(f"📁 Model saved to: {model_path}")
                 return str(model_path)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"⚠️ 下载失败（尝试 {attempt + 1}/{max_retries}）: {str(e)}")
-                    print(f"⏳ 等待 5 秒后重试...")
+                    print(f"⚠️ Download failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    print("⏳ Waiting 5 seconds before retry...")
                     time.sleep(5)
                 else:
-                    print(f"❌ 下载失败，已重试 {max_retries} 次")
-                    error_msg = f"模型下载失败: {str(e)}\n建议：\n"
+                    print(f"❌ Download failed after {max_retries} attempts")
+                    error_msg = f"Model download failed: {str(e)}\nSuggestions:\n"
                     if source == 'modelscope':
                         error_msg += (
-                            f"1. 检查网络连接是否正常\n"
-                            f"2. 确保已安装 ModelScope: pip install modelscope\n"
-                            f"3. 手动从 {source_url} 下载模型到: {model_path}\n"
+                            "1. Check your network connection\n"
+                            "2. Ensure ModelScope is installed: pip install modelscope\n"
+                            f"3. Manually download from {source_url} to: {model_path}\n"
                         )
                     else:
                         error_msg += (
-                            f"1. 检查网络连接是否正常\n"
-                            f"2. 设置 HF_ENDPOINT 环境变量使用镜像源（如：https://hf-mirror.com）\n"
-                            f"3. 手动从 {source_url} 下载模型到: {model_path}\n"
+                            "1. Check your network connection\n"
+                            "2. Set HF_ENDPOINT to use a mirror (e.g., https://hf-mirror.com)\n"
+                            f"3. Manually download from {source_url} to: {model_path}\n"
                         )
                     raise RuntimeError(error_msg)
 
 class Qwen3VL_Advanced:
-    """Qwen3-VL 高级节点 - 支持图像和视频理解"""
+    """Qwen3-VL advanced node - supports image and video understanding."""
     
     def __init__(self):
         self.model = None
@@ -338,14 +338,14 @@ class Qwen3VL_Advanced:
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
         self.image_processor = ImageProcessor()
-        print(f"Qwen3VL 节点已初始化。设备: {self.device_info['device_type']}")
+        print(f"Qwen3VL node initialized. Device: {self.device_info['device_type']}")
         if not self.device_info["memory_sufficient"]:
-            print(f"警告: {self.device_info['warning_message']}")
+            print(f"Warning: {self.device_info['warning_message']}")
 
     def clear_model_resources(self):
-        """清理模型资源"""
+        """Release model resources."""
         if self.model is not None:
-            print("释放模型资源...")
+            print("Releasing model resources...")
             del self.model, self.processor, self.tokenizer
             self.model = self.processor = self.tokenizer = None
             self.current_model_name = self.current_quantization = self.current_device = None
@@ -354,21 +354,21 @@ class Qwen3VL_Advanced:
                 torch.cuda.empty_cache()
 
     def load_model(self, model_name: str, quantization_str: str, device: str = "auto", attn_mode: str = "SDPA"):
-        """加载模型
-        
+        """Load model.
+
         Args:
-            model_name: 模型名称
-            quantization_str: 量化级别字符串
-            device: 设备类型 (auto/cuda/cpu/mps)
-        
+            model_name: Model name
+            quantization_str: Quantization level string
+            device: Device type (auto/cuda/cpu/mps)
+
         Raises:
-            ValueError: 当 GPU 不支持 FP8 模型或使用 abliterated 模型时
+            ValueError: When GPU does not support FP8 model or abliterated model is used
         """
         self.device_info = get_device_info()
         effective_device = self.device_info["recommended_device"] if device == "auto" else device
         attn_implementation = resolve_attn_implementation(attn_mode)
-        
-        # 如果模型已加载且配置相同，则跳过
+
+        # Skip if model is already loaded with the same configuration
         if (self.model is not None and 
             self.current_model_name == model_name and 
             self.current_quantization == quantization_str and 
@@ -380,20 +380,20 @@ class Qwen3VL_Advanced:
 
         model_info = get_model_info(model_name)
         
-        # 检查 abliterated 模型的警告
+        # Warn for abliterated models
         if model_info.get("abliterated"):
-            warning_msg = model_info.get("warning", "此模型已移除安全过滤")
-            print(f"\n⚠️  警告: {warning_msg}\n")
+            warning_msg = model_info.get("warning", "This model has safety filters removed")
+            print(f"\n⚠️  Warning: {warning_msg}\n")
         
-        # 检查 FP8 量化模型的 GPU 计算能力要求
+        # Check GPU compute capability for FP8 quantized models
         if model_info.get("quantized"):
             if self.device_info["gpu"]["available"]:
                 major, minor = torch.cuda.get_device_capability()
                 cc = major + minor / 10
                 if cc < 8.9:
                     raise ValueError(
-                        f"FP8 模型需要计算能力 8.9 或更高的 GPU (例如 RTX 4090)。"
-                        f"您的 GPU 计算能力为 {cc}。请选择非 FP8 模型。"
+                        f"FP8 models require a GPU with compute capability 8.9 or higher (e.g., RTX 4090)."
+                        f"Your GPU compute capability is {cc}. Please choose a non-FP8 model."
                     )
 
         model_path = self.downloader.ensure_model_available(model_name)
@@ -401,7 +401,7 @@ class Qwen3VL_Advanced:
         
         quant_config, load_dtype = None, torch.float16
         
-        # 仅对非预量化模型应用量化配置
+        # Only apply quantization config for non-pre-quantized models
         if not get_model_info(model_name).get("quantized", False):
             if adjusted_quantization == Quantization.Q4_BIT:
                 quant_config = BitsAndBytesConfig(
@@ -419,20 +419,20 @@ class Qwen3VL_Advanced:
         if effective_device == "cuda" and torch.cuda.is_available():
             device_map = {"": 0}
 
-        # 构建模型加载参数
+        # Build model load kwargs
         load_kwargs = {
             "device_map": device_map,
             "torch_dtype": load_dtype,
             "attn_implementation": attn_implementation,
             "use_safetensors": True,
-            "trust_remote_code": True  # abliterated 模型需要
+            "trust_remote_code": True  # Required for abliterated models
         }
         
         if quant_config:
             load_kwargs["quantization_config"] = quant_config
 
-        print(f"正在加载模型 '{model_name}'...")
-        # 加载模型、处理器和分词器
+        print(f"Loading model '{model_name}'...")
+        # Load model, processor, and tokenizer
         self.model = AutoModelForImageTextToText.from_pretrained(model_path, **load_kwargs).eval()
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -445,140 +445,140 @@ class Qwen3VL_Advanced:
             self.model_device = str(next(self.model.parameters()).device)
         except StopIteration:
             self.model_device = effective_device
-        print("模型加载成功")
+        print("Model loaded successfully")
 
     @classmethod
     def INPUT_TYPES(cls):
-        """定义节点输入类型"""
+        """Define node input types."""
         model_names = [name for name in MODEL_CONFIGS.keys() if not name.startswith('_')]
         default_model = model_names[4] if len(model_names) > 4 else model_names[0]
-        preset_prompts = MODEL_CONFIGS.get("_preset_prompts", ["详细描述这张图片"])
+        preset_prompts = MODEL_CONFIGS.get("_preset_prompts", ["Describe this image in detail"])
 
         return {
             "required": {
-                "🤖 模型选择": (model_names, {"default": default_model}),
-                "⚙️ 量化级别": (list(Quantization.get_values()), {"default": Quantization.NONE}),
-                "🧠 注意力模式": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
-                "🖼️ 最大长边": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
-                "💭 预设提示词": (preset_prompts, {"default": preset_prompts[2]}),
-                "✏️ 自定义提示词": ("STRING", {
+                "🤖 Model": (model_names, {"default": default_model}),
+                "⚙️ Quantization": (list(Quantization.get_values()), {"default": Quantization.NONE}),
+                "🧠 Attention Mode": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
+                "🖼️ Max Long Side": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
+                "💭 Preset Prompt": (preset_prompts, {"default": preset_prompts[2]}),
+                "✏️ Custom Prompt": ("STRING", {
                     "default": "",
                     "multiline": True,
-                    "placeholder": "可选择预设提示词或输入自定义提示词"
+                    "placeholder": "Pick a preset prompt or type a custom one"
                 }),
-                "🔢 最大令牌数": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16}),
-                "🌡️ 采样温度": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1}),
-                "🎯 核采样参数": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "🔍 束搜索数量": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
-                "🚫 重复惩罚": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "🎬 视频帧数": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1}),
-                "💻 设备选择": (["auto", "cuda", "cpu", "mps"], {"default": "auto"}),
-                "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
-                "🧪 性能诊断": ("BOOLEAN", {"default": False, "tooltip": "打印一次关键环境与推理信息（用于排查慢速问题）"}),
-                "🎲 随机种子": ("INT", {
+                "🔢 Max Tokens": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16}),
+                "🌡️ Temperature": ("FLOAT", {"default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1}),
+                "🎯 Top-p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "🔍 Num Beams": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
+                "🚫 Repetition Penalty": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "🎬 Video Frames": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1}),
+                "💻 Device": (["auto", "cuda", "cpu", "mps"], {"default": "auto"}),
+                "🚀 Enable TF32": ("BOOLEAN", {"default": False, "tooltip": "Enable TF32 acceleration (Ampere+ GPUs only; can significantly improve speed)."}),
+                "🔄 Keep Model Loaded": ("BOOLEAN", {"default": False}),
+                "🧪 Performance Diagnostics": ("BOOLEAN", {"default": False, "tooltip": "Print key environment and inference info once (useful for debugging slow runs)."}),
+                "🎲 Seed": ("INT", {
                     "default": -1,
                     "min": -1,
                     "max": 0xffffffffffffffff,
-                    "tooltip": "随机种子，-1为随机"
+                    "tooltip": "Random seed (-1 means random)."
                 }),
-                "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
+                "🎯 Seed Mode": (["Random", "Fixed", "Increment"], {"default": "Random"}),
             },
             "optional": {
-                "🖼️ 图像1": ("IMAGE",),
-                "🖼️ 图像2": ("IMAGE",),
-                "🖼️ 图像3": ("IMAGE",),
-                "🖼️ 图像4": ("IMAGE",),
-                "🎥 视频": ("IMAGE",),
-                "🎯 Qwen3VL额外选项": ("QWEN3VL_EXTRA_OPTIONS", {
-                    "tooltip": "可选的Qwen3VL额外选项，连接Qwen3VL额外选项节点"
+                "🖼️ Image 1": ("IMAGE",),
+                "🖼️ Image 2": ("IMAGE",),
+                "🖼️ Image 3": ("IMAGE",),
+                "🖼️ Image 4": ("IMAGE",),
+                "🎥 Video": ("IMAGE",),
+                "🎯 Qwen3VL Extra Options": ("QWEN3VL_EXTRA_OPTIONS", {
+                    "tooltip": "Optional Qwen3VL extra options (connect the Qwen3VL Extra Options node)."
                 }),
             }
         }
 
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("文本输出",)
+    RETURN_NAMES = ("Text",)
     FUNCTION = "process"
-    CATEGORY = "🍭大炮-Qwen3VL"
+    CATEGORY = "Qwen3VL-DP"
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        seed_control = kwargs.get("🎯 种子控制", "随机")
-        seed = kwargs.get("🎲 随机种子", -1)
-        
-        # 随机和递增模式下，强制更新 (返回 NaN)
-        if seed_control in ["随机", "递增"]:
+        seed_mode = kwargs.get("🎯 Seed Mode", "Random")
+        seed = kwargs.get("🎲 Seed", -1)
+
+        # Random and Increment modes always force update (return NaN)
+        if seed_mode in ["Random", "Increment"]:
             return float("nan")
-        
-        # 固定模式下，仅当种子值变化时更新
+
+        # Fixed mode: only update when seed value changes
         return seed
 
     @torch.no_grad()
     def process(self, **kwargs):
-        """处理图像或视频输入并生成文本 - 使用kwargs处理带emoji的参数名"""
-        # 提取参数（兼容带emoji的参数名）
-        模型名称 = kwargs.get("🤖 模型选择")
-        量化级别 = kwargs.get("⚙️ 量化级别")
-        注意力模式 = kwargs.get("🧠 注意力模式", "SDPA")
-        最大长边 = kwargs.get("🖼️ 最大长边", 768)
-        性能诊断 = kwargs.get("🧪 性能诊断", False)
-        预设提示词 = kwargs.get("💭 预设提示词")
-        最大令牌数 = kwargs.get("🔢 最大令牌数")
-        采样温度 = kwargs.get("🌡️ 采样温度")
-        核采样参数 = kwargs.get("🎯 核采样参数")
-        重复惩罚 = kwargs.get("🚫 重复惩罚")
-        束搜索数量 = kwargs.get("🔍 束搜索数量")
-        视频帧数 = kwargs.get("🎬 视频帧数")
-        设备选择 = kwargs.get("💻 设备选择")
-        随机种子 = kwargs.get("🎲 随机种子")
-        自定义提示词 = kwargs.get("✏️ 自定义提示词", "")
-        图像1 = kwargs.get("🖼️ 图像1")
-        图像2 = kwargs.get("🖼️ 图像2")
-        图像3 = kwargs.get("🖼️ 图像3")
-        图像4 = kwargs.get("🖼️ 图像4")
-        视频 = kwargs.get("🎥 视频")
-        保持模型加载 = kwargs.get("🔄 保持模型加载", False)
-        开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
-        种子控制 = kwargs.get("🎯 种子控制", "随机")
-        extra_options = kwargs.get("🎯 Qwen3VL额外选项", None)
+        """Process image/video inputs and generate text (uses kwargs for emoji parameter names)."""
+        # Extract parameters
+        model_name = kwargs.get("🤖 Model")
+        quantization = kwargs.get("⚙️ Quantization")
+        attn_mode = kwargs.get("🧠 Attention Mode", "SDPA")
+        max_long_side = kwargs.get("🖼️ Max Long Side", 768)
+        perf_diag = kwargs.get("🧪 Performance Diagnostics", False)
+        preset_prompt = kwargs.get("💭 Preset Prompt")
+        max_tokens = kwargs.get("🔢 Max Tokens")
+        temperature = kwargs.get("🌡️ Temperature")
+        top_p = kwargs.get("🎯 Top-p")
+        repetition_penalty = kwargs.get("🚫 Repetition Penalty")
+        num_beams = kwargs.get("🔍 Num Beams")
+        video_frames = kwargs.get("🎬 Video Frames")
+        device = kwargs.get("💻 Device")
+        seed = kwargs.get("🎲 Seed")
+        custom_prompt = kwargs.get("✏️ Custom Prompt", "")
+        image1 = kwargs.get("🖼️ Image 1")
+        image2 = kwargs.get("🖼️ Image 2")
+        image3 = kwargs.get("🖼️ Image 3")
+        image4 = kwargs.get("🖼️ Image 4")
+        video = kwargs.get("🎥 Video")
+        keep_model_loaded = kwargs.get("🔄 Keep Model Loaded", False)
+        enable_tf32 = kwargs.get("🚀 Enable TF32", False)
+        seed_mode = kwargs.get("🎯 Seed Mode", "Random")
+        extra_options = kwargs.get("🎯 Qwen3VL Extra Options", None)
         start_time = time.time()
-        
-        # 设置 TF32 加速
+
+        # Configure TF32 acceleration
         if torch.cuda.is_available():
-            torch.backends.cuda.matmul.allow_tf32 = 开启TF32加速
-            torch.backends.cudnn.allow_tf32 = 开启TF32加速
-            if 开启TF32加速:
-                print("🚀 已开启 TF32 加速模式")
-        
-        # 种子逻辑处理
-        if 种子控制 == "固定":
-            effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
-        elif 种子控制 == "随机":
+            torch.backends.cuda.matmul.allow_tf32 = enable_tf32
+            torch.backends.cudnn.allow_tf32 = enable_tf32
+            if enable_tf32:
+                print("🚀 TF32 acceleration enabled")
+
+        # Seed logic
+        if seed_mode == "Fixed":
+            effective_seed = seed if seed != -1 else random.randint(0, 2147483647)
+        elif seed_mode == "Random":
             effective_seed = random.randint(0, 2147483647)
-        elif 种子控制 == "递增":
+        elif seed_mode == "Increment":
             if self.last_seed == -1:
-                effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+                effective_seed = seed if seed != -1 else random.randint(0, 2147483647)
             else:
                 effective_seed = self.last_seed + 1
         else:
             effective_seed = random.randint(0, 2147483647)
-        
+
         self.last_seed = effective_seed
-        print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
+        print(f"Using random seed: {effective_seed} (mode: {seed_mode})")
         torch.manual_seed(effective_seed)
-        
-        # 检查 transformers 版本
+
+        # Check transformers version
         if version.parse(transformers.__version__) < version.parse("4.57.0"):
-            raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
+            raise RuntimeError(f"transformers version too low: {transformers.__version__}, requires >= 4.57.0")
 
         load_start = time.time()
-        self.load_model(模型名称, 量化级别, 设备选择, 注意力模式)
+        self.load_model(model_name, quantization, device, attn_mode)
         load_time = time.time() - load_start
         effective_device = self.current_device
         device_for_log = self.model_device or effective_device
         if effective_device == "cpu" and torch.cuda.is_available():
-            print("⚠️ 当前在 CPU 推理；请检查 torch 是否为 CUDA 版本。")
-        if 性能诊断:
+            print("⚠️ Running on CPU; ensure torch is built with CUDA support.")
+        if perf_diag:
             try:
                 import sys
                 model_dtype = None
@@ -607,74 +607,74 @@ class Qwen3VL_Advanced:
                 print(f"[PerfDiag] python={py} {torch_info}")
                 print(f"[PerfDiag] {gpu_info} {sdp_info}")
                 print(f"[PerfDiag] model_device={device_for_log} model_dtype={model_dtype} attn={self.current_attn_implementation}")
-                print(f"[PerfDiag] {pv_shape} max_side={最大长边}")
-                print(f"[PerfDiag] max_new_tokens={最大令牌数} num_beams={束搜索数量} do_sample={束搜索数量<=1}")
+                print(f"[PerfDiag] {pv_shape} max_side={max_long_side}")
+                print(f"[PerfDiag] max_new_tokens={max_tokens} num_beams={num_beams} do_sample={num_beams<=1}")
             except Exception:
                 pass
-        
-        # 确定使用的提示词（图像/视频反推专用）
-        prompt_text = SYSTEM_PROMPTS.get(预设提示词, 预设提示词)
-        if 自定义提示词 and 自定义提示词.strip():
-            prompt_text = 自定义提示词.strip()
-        
-        # 应用Qwen3VL额外选项生成增强提示词（如果有的话）
+
+        # Determine the prompt to use
+        prompt_text = SYSTEM_PROMPTS.get(preset_prompt, preset_prompt)
+        if custom_prompt and custom_prompt.strip():
+            prompt_text = custom_prompt.strip()
+
+        # Apply Qwen3VL extra options to build enhanced prompt (if connected)
         if extra_options:
             try:
                 import qwen3vl_extra_options
                 prompt_text = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(prompt_text, extra_options)
-                print(f"✅ 已应用Qwen3VL额外选项增强提示词")
+                print("✅ Qwen3VL Extra Options applied to prompt")
             except (ImportError, AttributeError) as e:
-                print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础提示词")
-        
-        # 构建对话消息
+                print(f"⚠️ Warning: failed to import Qwen3VL extra options module ({e}); using base prompt")
+
+        # Build conversation messages
         conversation = [{"role": "user", "content": []}]
-            
-        # 添加多个图像
-        for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
+
+        # Add images
+        for image in [image1, image2, image3, image4]:
             if image is not None:
                 conversation[0]["content"].append({
                     "type": "image",
-                    "image": self.image_processor.to_pil(image, 最大长边)
+                    "image": self.image_processor.to_pil(image, max_long_side)
                 })
-        
-        # 添加视频（作为多帧图像序列）
-        if 视频 is not None:
-            video_frames = [
-                Image.fromarray((frame.cpu().numpy() * 255).astype(np.uint8))
-                for frame in 视频
-            ]
-            
-            # 采样视频帧
-            if len(video_frames) > 视频帧数:
-                indices = np.linspace(0, len(video_frames) - 1, 视频帧数, dtype=int)
-                sampled_frames = [video_frames[i] for i in indices]
-            else:
-                sampled_frames = video_frames
 
-            # 确保至少有2帧（Qwen3-VL 要求）
+        # Add video (as a multi-frame image sequence)
+        if video is not None:
+            raw_frames = [
+                Image.fromarray((frame.cpu().numpy() * 255).astype(np.uint8))
+                for frame in video
+            ]
+
+            # Sample video frames
+            if len(raw_frames) > video_frames:
+                indices = np.linspace(0, len(raw_frames) - 1, video_frames, dtype=int)
+                sampled_frames = [raw_frames[i] for i in indices]
+            else:
+                sampled_frames = raw_frames
+
+            # Ensure at least 2 frames (Qwen3-VL requirement)
             if sampled_frames and len(sampled_frames) == 1:
                 sampled_frames.append(sampled_frames[0])
-                
+
             if sampled_frames:
                 conversation[0]["content"].append({
                     "type": "video",
-                    "video": [self.image_processor.to_pil(f, 最大长边) for f in sampled_frames]
+                    "video": [self.image_processor.to_pil(f, max_long_side) for f in sampled_frames]
                 })
 
-        # 添加文本提示
+        # Add text prompt
         conversation[0]["content"].append({
             "type": "text",
             "text": prompt_text
         })
 
-        # 应用聊天模板
+        # Apply chat template
         text_prompt = self.processor.apply_chat_template(
             conversation,
             tokenize=False,
             add_generation_prompt=True
         )
-            
-        # 提取图像和视频用于处理器
+
+        # Extract images and video for the processor
         pil_images = [
             item['image'] for item in conversation[0]['content']
             if item['type'] == 'image'
@@ -685,46 +685,46 @@ class Qwen3VL_Advanced:
             for frame in item['video']
         ]
         videos_arg = [video_frames_list] if video_frames_list else None
-        
-        # 处理输入
+
+        # Process inputs
         inputs = self.processor(
             text=text_prompt,
             images=pil_images if pil_images else None,
             videos=videos_arg,
             return_tensors="pt"
         )
-        
-        # 将输入移到设备
+
+        # Move inputs to device
         model_inputs = {
             k: v.to(effective_device)
             for k, v in inputs.items()
             if torch.is_tensor(v)
         }
 
-        # 设置停止标记
+        # Set stop tokens
         stop_tokens = [self.tokenizer.eos_token_id]
         if hasattr(self.tokenizer, 'eot_id'):
             stop_tokens.append(self.tokenizer.eot_id)
 
-        # 生成参数
+        # Generation parameters
         gen_kwargs = {
-            "max_new_tokens": 最大令牌数,
-            "repetition_penalty": 重复惩罚,
-            "num_beams": 束搜索数量,
+            "max_new_tokens": max_tokens,
+            "repetition_penalty": repetition_penalty,
+            "num_beams": num_beams,
             "eos_token_id": stop_tokens,
             "pad_token_id": self.tokenizer.pad_token_id
         }
-        
-        if 束搜索数量 > 1:
+
+        if num_beams > 1:
             gen_kwargs["do_sample"] = False
         else:
             gen_kwargs.update({
                 "do_sample": True,
-                "temperature": 采样温度,
-                "top_p": 核采样参数
+                "temperature": temperature,
+                "top_p": top_p
             })
 
-        # 生成文本
+        # Generate text
         gen_start = time.time()
         if "cuda" in str(effective_device) and torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -737,25 +737,25 @@ class Qwen3VL_Advanced:
         if "cuda" in str(effective_device) and torch.cuda.is_available():
             torch.cuda.synchronize()
         gen_time = time.time() - gen_start
-        
+
         input_ids_len = model_inputs["input_ids"].shape[1]
         text = self.tokenizer.decode(
             outputs[0, input_ids_len:],
             skip_special_tokens=True
         )
-        
+
         total_time = time.time() - start_time
         generated_tokens = int(outputs.shape[1] - input_ids_len) if hasattr(outputs, "shape") else 0
         tps = (generated_tokens / gen_time) if gen_time > 0 else 0.0
-        print(f"⏱️ 耗时统计: 设备 {device_for_log} | 注意力 {self.current_attn_implementation} | 输入 {input_ids_len} | 输出 {generated_tokens} | 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s ({tps:.1f} tok/s) | 总计 {total_time:.2f}s")
-        
-        if not 保持模型加载:
+        print(f"⏱️ Timing: device {device_for_log} | attn {self.current_attn_implementation} | in {input_ids_len} | out {generated_tokens} | load {load_time:.2f}s | gen {gen_time:.2f}s ({tps:.1f} tok/s) | total {total_time:.2f}s")
+
+        if not keep_model_loaded:
             self.clear_model_resources()
         return (text.strip(),)
 
 
 class Qwen3VL_Chat:
-    """Qwen3-VL 智能对话节点 - 支持多模态LLM对话"""
+    """Qwen3-VL chat node - multimodal LLM conversation."""
     
     def __init__(self):
         self.model = None
@@ -770,14 +770,14 @@ class Qwen3VL_Chat:
         self.device_info = get_device_info()
         self.downloader = ModelDownloader(MODEL_CONFIGS)
         self.image_processor = ImageProcessor()
-        print(f"Qwen3VL 智能对话节点已初始化。设备: {self.device_info['device_type']}")
+        print(f"Qwen3VL chat node initialized. Device: {self.device_info['device_type']}")
         if not self.device_info["memory_sufficient"]:
-            print(f"警告: {self.device_info['warning_message']}")
+            print(f"Warning: {self.device_info['warning_message']}")
 
     def clear_model_resources(self):
-        """清理模型资源"""
+        """Release model resources."""
         if self.model is not None:
-            print("释放模型资源...")
+            print("Releasing model resources...")
             del self.model, self.processor, self.tokenizer
             self.model = self.processor = self.tokenizer = None
             self.current_model_name = self.current_quantization = self.current_device = None
@@ -786,7 +786,7 @@ class Qwen3VL_Chat:
                 torch.cuda.empty_cache()
 
     def load_model(self, model_name: str, quantization_str: str, device: str = "auto", attn_mode: str = "SDPA"):
-        """加载模型"""
+        """Load model."""
         self.device_info = get_device_info()
         effective_device = self.device_info["recommended_device"] if device == "auto" else device
         attn_implementation = resolve_attn_implementation(attn_mode)
@@ -803,20 +803,20 @@ class Qwen3VL_Chat:
 
         model_info = get_model_info(model_name)
         
-        # 检查 abliterated 模型的警告
+        # Warn for abliterated models
         if model_info.get("abliterated"):
-            warning_msg = model_info.get("warning", "此模型已移除安全过滤")
-            print(f"\n⚠️  警告: {warning_msg}\n")
+            warning_msg = model_info.get("warning", "This model has safety filters removed")
+            print(f"\n⚠️  Warning: {warning_msg}\n")
         
-        # 检查 FP8 量化模型的 GPU 计算能力要求
+        # Check GPU compute capability for FP8 quantized models
         if model_info.get("quantized"):
             if self.device_info["gpu"]["available"]:
                 major, minor = torch.cuda.get_device_capability()
                 cc = major + minor / 10
                 if cc < 8.9:
                     raise ValueError(
-                        f"FP8 模型需要计算能力 8.9 或更高的 GPU (例如 RTX 4090)。"
-                        f"您的 GPU 计算能力为 {cc}。请选择非 FP8 模型。"
+                        f"FP8 models require a GPU with compute capability 8.9 or higher (e.g., RTX 4090)."
+                        f"Your GPU compute capability is {cc}. Please choose a non-FP8 model."
                     )
 
         model_path = self.downloader.ensure_model_available(model_name)
@@ -824,7 +824,7 @@ class Qwen3VL_Chat:
         
         quant_config, load_dtype = None, torch.float16
         
-        # 仅对非预量化模型应用量化配置
+        # Only apply quantization config for non-pre-quantized models
         if not get_model_info(model_name).get("quantized", False):
             if adjusted_quantization == Quantization.Q4_BIT:
                 quant_config = BitsAndBytesConfig(
@@ -842,7 +842,7 @@ class Qwen3VL_Chat:
         if effective_device == "cuda" and torch.cuda.is_available():
             device_map = {"": 0}
 
-        # 构建模型加载参数
+        # Build model load kwargs
         load_kwargs = {
             "device_map": device_map,
             "torch_dtype": load_dtype,
@@ -854,8 +854,8 @@ class Qwen3VL_Chat:
         if quant_config:
             load_kwargs["quantization_config"] = quant_config
 
-        print(f"正在加载模型 '{model_name}'...")
-        # 加载模型、处理器和分词器
+        print(f"Loading model '{model_name}'...")
+        # Load model, processor, and tokenizer
         self.model = AutoModelForImageTextToText.from_pretrained(model_path, **load_kwargs).eval()
         self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -868,135 +868,134 @@ class Qwen3VL_Chat:
             self.model_device = str(next(self.model.parameters()).device)
         except StopIteration:
             self.model_device = effective_device
-        print("模型加载成功")
+        print("Model loaded successfully")
 
     @classmethod
     def INPUT_TYPES(cls):
-        """定义智能对话节点输入类型"""
+        """Define chat node input types."""
         model_names = [name for name in MODEL_CONFIGS.keys() if not name.startswith('_')]
         default_model = model_names[4] if len(model_names) > 4 else model_names[0]
 
         return {
             "required": {
-                "🤖 模型选择": (model_names, {"default": default_model}),
-                "⚙️ 量化级别": (list(Quantization.get_values()), {"default": Quantization.NONE}),
-                "🧠 注意力模式": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
-                "🖼️ 最大长边": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
-                "💬 用户输入": ("STRING", {
-                    "default": "你好，请介绍一下你自己。",
+                "🤖 Model": (model_names, {"default": default_model}),
+                "⚙️ Quantization": (list(Quantization.get_values()), {"default": Quantization.NONE}),
+                "🧠 Attention Mode": (["SDPA", "Flash Attention 2"], {"default": "SDPA"}),
+                "🖼️ Max Long Side": ("INT", {"default": 768, "min": 256, "max": 2048, "step": 64}),
+                "💬 User Input": ("STRING", {
+                    "default": "Hi! Please introduce yourself.",
                     "multiline": True,
-                    "placeholder": "输入你想要对话的内容"
+                    "placeholder": "Type what you want to say"
                 }),
-                "🎭 系统角色定义": ("STRING", {
-                    "default": "你是一个专业、友好且乐于助人的AI助手。",
+                "🎭 System Role": ("STRING", {
+                    "default": "You are a professional, friendly, and helpful AI assistant.",
                     "multiline": True,
-                    "placeholder": "定义AI的角色和行为方式"
+                    "placeholder": "Define the assistant's role and behavior"
                 }),
-                "🌡️ 温度": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.0, "step": 0.1}),
+                "🌡️ Temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.0, "step": 0.1}),
                 "🎯 Top-P": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "📏 最大长度": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16, "tooltip": "生成的最大新token数；数值越大越慢"}),
-                "🎲 随机种子": ("INT", {
+                "📏 Max Length": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 16, "tooltip": "Max new tokens to generate; larger values are slower."}),
+                "🎲 Seed": ("INT", {
                     "default": -1,
                     "min": -1,
                     "max": 0xffffffffffffffff,
-                    "tooltip": "随机种子，-1为随机"
+                    "tooltip": "Random seed (-1 means random)."
                 }),
-                "🎯 种子控制": (["随机", "固定", "递增"], {"default": "随机"}),
-                "🚀 开启TF32加速": ("BOOLEAN", {"default": False, "tooltip": "启用TF32加速（仅支持Ampere及以上架构显卡，如30/40/50系，能显著提升速度）"}),
-                "🔄 保持模型加载": ("BOOLEAN", {"default": False}),
-                "🧪 性能诊断": ("BOOLEAN", {"default": False, "tooltip": "打印一次关键环境与推理信息（用于排查慢速问题）"}),
+                "🎯 Seed Mode": (["Random", "Fixed", "Increment"], {"default": "Random"}),
+                "🚀 Enable TF32": ("BOOLEAN", {"default": False, "tooltip": "Enable TF32 acceleration (Ampere+ GPUs only; can significantly improve speed)."}),
+                "🔄 Keep Model Loaded": ("BOOLEAN", {"default": False}),
+                "🧪 Performance Diagnostics": ("BOOLEAN", {"default": False, "tooltip": "Print key environment and inference info once (useful for debugging slow runs)."}),
             },
             "optional": {
-                "🖼️ 图像1": ("IMAGE",),
-                "🖼️ 图像2": ("IMAGE",),
-                "🖼️ 图像3": ("IMAGE",),
-                "🖼️ 图像4": ("IMAGE",),
-                "🎯 Qwen3VL额外选项": ("QWEN3VL_EXTRA_OPTIONS", {
-                    "tooltip": "可选的Qwen3VL额外选项，连接Qwen3VL额外选项节点"
+                "🖼️ Image 1": ("IMAGE",),
+                "🖼️ Image 2": ("IMAGE",),
+                "🖼️ Image 3": ("IMAGE",),
+                "🖼️ Image 4": ("IMAGE",),
+                "🎯 Qwen3VL Extra Options": ("QWEN3VL_EXTRA_OPTIONS", {
+                    "tooltip": "Optional Qwen3VL extra options (connect the Qwen3VL Extra Options node)."
                 }),
             }
         }
 
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("AI回复",)
+    RETURN_NAMES = ("AI Reply",)
     FUNCTION = "chat"
-    CATEGORY = "🍭大炮-Qwen3VL"
+    CATEGORY = "Qwen3VL-DP"
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        seed_control = kwargs.get("🎯 种子控制", "随机")
-        seed = kwargs.get("🎲 随机种子", -1)
-        
-        # 随机和递增模式下，强制更新 (返回 NaN)
-        if seed_control in ["随机", "递增"]:
+        seed_mode = kwargs.get("🎯 Seed Mode", "Random")
+        seed = kwargs.get("🎲 Seed", -1)
+
+        # Random and Increment modes always force update (return NaN)
+        if seed_mode in ["Random", "Increment"]:
             return float("nan")
-        
-        # 固定模式下，仅当种子值变化时更新
+
+        # Fixed mode: only update when seed value changes
         return seed
 
     @torch.no_grad()
     def chat(self, **kwargs):
-        """智能对话处理函数"""
-        # 提取参数（兼容带emoji的参数名）
-        模型名称 = kwargs.get("🤖 模型选择")
-        量化级别 = kwargs.get("⚙️ 量化级别")
-        注意力模式 = kwargs.get("🧠 注意力模式", "SDPA")
-        最大长边 = kwargs.get("🖼️ 最大长边", 768)
-        用户输入 = kwargs.get("💬 用户输入")
-        系统角色定义 = kwargs.get("🎭 系统角色定义")
-        温度 = kwargs.get("🌡️ 温度")
-        最大长度 = kwargs.get("📏 最大长度")
-        随机种子 = kwargs.get("🎲 随机种子")
-        种子控制 = kwargs.get("🎯 种子控制")
-        保持模型加载 = kwargs.get("🔄 保持模型加载", False)
-        开启TF32加速 = kwargs.get("🚀 开启TF32加速", False)
-        性能诊断 = kwargs.get("🧪 性能诊断", False)
-        图像1 = kwargs.get("🖼️ 图像1")
-        图像2 = kwargs.get("🖼️ 图像2")
-        图像3 = kwargs.get("🖼️ 图像3")
-        图像4 = kwargs.get("🖼️ 图像4")
-        extra_options = kwargs.get("🎯 Qwen3VL额外选项", None)
-        # 处理Top-P参数（兼容新旧版本）
+        """Chat handler."""
+        # Extract parameters
+        model_name = kwargs.get("🤖 Model")
+        quantization = kwargs.get("⚙️ Quantization")
+        attn_mode = kwargs.get("🧠 Attention Mode", "SDPA")
+        max_long_side = kwargs.get("🖼️ Max Long Side", 768)
+        user_input = kwargs.get("💬 User Input")
+        system_role = kwargs.get("🎭 System Role")
+        temperature = kwargs.get("🌡️ Temperature")
+        max_length = kwargs.get("📏 Max Length")
+        seed = kwargs.get("🎲 Seed")
+        seed_mode = kwargs.get("🎯 Seed Mode")
+        keep_model_loaded = kwargs.get("🔄 Keep Model Loaded", False)
+        enable_tf32 = kwargs.get("🚀 Enable TF32", False)
+        perf_diag = kwargs.get("🧪 Performance Diagnostics", False)
+        image1 = kwargs.get("🖼️ Image 1")
+        image2 = kwargs.get("🖼️ Image 2")
+        image3 = kwargs.get("🖼️ Image 3")
+        image4 = kwargs.get("🖼️ Image 4")
+        extra_options = kwargs.get("🎯 Qwen3VL Extra Options", None)
         top_p = kwargs.get("🎯 Top-P", 0.90)
-        
+
         start_time = time.time()
-        
-        # 设置 TF32 加速
+
+        # Configure TF32 acceleration
         if torch.cuda.is_available():
-            torch.backends.cuda.matmul.allow_tf32 = 开启TF32加速
-            torch.backends.cudnn.allow_tf32 = 开启TF32加速
-            if 开启TF32加速:
-                print("🚀 已开启 TF32 加速模式")
-        
-        # 种子逻辑处理
-        if 种子控制 == "固定":
-            effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
-        elif 种子控制 == "随机":
+            torch.backends.cuda.matmul.allow_tf32 = enable_tf32
+            torch.backends.cudnn.allow_tf32 = enable_tf32
+            if enable_tf32:
+                print("🚀 TF32 acceleration enabled")
+
+        # Seed logic
+        if seed_mode == "Fixed":
+            effective_seed = seed if seed != -1 else random.randint(0, 2147483647)
+        elif seed_mode == "Random":
             effective_seed = random.randint(0, 2147483647)
-        elif 种子控制 == "递增":
+        elif seed_mode == "Increment":
             if self.last_seed == -1:
-                effective_seed = 随机种子 if 随机种子 != -1 else random.randint(0, 2147483647)
+                effective_seed = seed if seed != -1 else random.randint(0, 2147483647)
             else:
                 effective_seed = self.last_seed + 1
         else:
             effective_seed = random.randint(0, 2147483647)
-        
+
         self.last_seed = effective_seed
-        print(f"使用随机种子: {effective_seed} (模式: {种子控制})")
+        print(f"Using random seed: {effective_seed} (mode: {seed_mode})")
         torch.manual_seed(effective_seed)
-        
-        # 检查 transformers 版本
+
+        # Check transformers version
         if version.parse(transformers.__version__) < version.parse("4.57.0"):
-            raise RuntimeError(f"transformers 版本过低: 当前版本 {transformers.__version__}, 需要 >= 4.57.0")
+            raise RuntimeError(f"transformers version too low: {transformers.__version__}, requires >= 4.57.0")
 
         load_start = time.time()
-        self.load_model(模型名称, 量化级别, "auto", 注意力模式)
+        self.load_model(model_name, quantization, "auto", attn_mode)
         load_time = time.time() - load_start
         effective_device = self.current_device
         device_for_log = self.model_device or effective_device
         if effective_device == "cpu" and torch.cuda.is_available():
-            print("⚠️ 当前在 CPU 推理；请检查 torch 是否为 CUDA 版本。")
-        if 性能诊断:
+            print("⚠️ Running on CPU; ensure torch is built with CUDA support.")
+        if perf_diag:
             try:
                 import sys
                 model_dtype = None
@@ -1022,63 +1021,63 @@ class Qwen3VL_Chat:
                 print(f"[PerfDiag] python={py} {torch_info}")
                 print(f"[PerfDiag] {gpu_info} {sdp_info}")
                 print(f"[PerfDiag] model_device={device_for_log} model_dtype={model_dtype} attn={self.current_attn_implementation}")
-                print(f"[PerfDiag] {pv_shape} max_side={最大长边}")
-                print(f"[PerfDiag] max_new_tokens={最大长度} do_sample=True")
+                print(f"[PerfDiag] {pv_shape} max_side={max_long_side}")
+                print(f"[PerfDiag] max_new_tokens={max_length} do_sample=True")
             except Exception:
                 pass
-        
-        # 处理系统角色定义，应用额外选项
-        system_prompt = 系统角色定义.strip() if 系统角色定义 else ""
-        
-        # 应用Qwen3VL额外选项增强系统提示词（如果有的话）
+
+        # Process system role, apply extra options
+        system_prompt = system_role.strip() if system_role else ""
+
+        # Apply Qwen3VL extra options to enhance system prompt (if connected)
         if extra_options and system_prompt:
             try:
                 import qwen3vl_extra_options
                 system_prompt = qwen3vl_extra_options.Qwen3VL_ExtraOptions.build_enhanced_prompt(system_prompt, extra_options)
-                print(f"✅ 已应用Qwen3VL额外选项增强系统角色")
+                print("✅ Qwen3VL Extra Options applied to system role")
             except (ImportError, AttributeError) as e:
-                print(f"⚠️ 警告: 无法导入Qwen3VL额外选项模块 ({e})，使用基础系统角色")
-        
-        # 构建对话消息，先添加系统角色定义
+                print(f"⚠️ Warning: failed to import Qwen3VL extra options module ({e}); using base system role")
+
+        # Build conversation, prepend system role
         conversation = []
-            
-        # 添加系统角色定义（如果提供）
+
+        # Add system role (if provided)
         if system_prompt:
             conversation.append({
                 "role": "system",
                 "content": [{"type": "text", "text": system_prompt}]
             })
-        
-        # 添加用户消息
+
+        # Add user message
         user_content = []
-        
-        # 添加多个图像
-        for i, image in enumerate([图像1, 图像2, 图像3, 图像4], 1):
+
+        # Add images
+        for image in [image1, image2, image3, image4]:
             if image is not None:
                 user_content.append({
                     "type": "image",
-                    "image": self.image_processor.to_pil(image, 最大长边)
+                    "image": self.image_processor.to_pil(image, max_long_side)
                 })
-        
-        # 添加用户文本输入
+
+        # Add user text input
         user_content.append({
             "type": "text",
-            "text": 用户输入
+            "text": user_input
         })
-        
+
         conversation.append({
             "role": "user",
             "content": user_content
         })
 
-        # 应用聊天模板
+        # Apply chat template
         text_prompt = self.processor.apply_chat_template(
             conversation,
             tokenize=False,
             add_generation_prompt=True
         )
-        
-        # 提取图像用于处理器
+
+        # Extract images for the processor
         pil_images = []
         for msg in conversation:
             if msg['role'] == 'user':
@@ -1086,42 +1085,42 @@ class Qwen3VL_Chat:
                     item['image'] for item in msg['content']
                     if item['type'] == 'image'
                 ])
-        
-        # 处理输入
+
+        # Process inputs
         inputs = self.processor(
             text=text_prompt,
             images=pil_images if pil_images else None,
             return_tensors="pt"
         )
-        
-        # 将输入移到设备
+
+        # Move inputs to device
         model_inputs = {
             k: v.to(effective_device)
             for k, v in inputs.items()
             if torch.is_tensor(v)
         }
 
-        # 设置停止标记
+        # Set stop tokens
         stop_tokens = [self.tokenizer.eos_token_id]
         if hasattr(self.tokenizer, 'eot_id'):
             stop_tokens.append(self.tokenizer.eot_id)
 
-        # 检查是否有未识别的参数
+        # Log unrecognized parameters
         remaining_kwargs = {k: v for k, v in kwargs.items() if not k.startswith(('🤖', '⚙️', '🧠', '🧪', '💬', '🎭', '🌡️', '🎯', '📏', '🎲', '🎮', '🔄', '🖼️', '🚀'))}
         if remaining_kwargs:
-            print(f"[Qwen3VL_Chat] 未识别的参数已忽略: {', '.join(remaining_kwargs.keys())}")
+            print(f"[Qwen3VL_Chat] Unrecognized parameters ignored: {', '.join(remaining_kwargs.keys())}")
 
-        # 生成参数
+        # Generation parameters
         gen_kwargs = {
-            "max_new_tokens": 最大长度,
+            "max_new_tokens": max_length,
             "do_sample": True,
-            "temperature": 温度,
+            "temperature": temperature,
             "top_p": top_p,
             "eos_token_id": stop_tokens,
             "pad_token_id": self.tokenizer.pad_token_id
         }
 
-        # 生成文本
+        # Generate text
         gen_start = time.time()
         if "cuda" in str(effective_device) and torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -1134,30 +1133,30 @@ class Qwen3VL_Chat:
         if "cuda" in str(effective_device) and torch.cuda.is_available():
             torch.cuda.synchronize()
         gen_time = time.time() - gen_start
-        
+
         input_ids_len = model_inputs["input_ids"].shape[1]
         text = self.tokenizer.decode(
             outputs[0, input_ids_len:],
             skip_special_tokens=True
         )
-        
+
         total_time = time.time() - start_time
         generated_tokens = int(outputs.shape[1] - input_ids_len) if hasattr(outputs, "shape") else 0
         tps = (generated_tokens / gen_time) if gen_time > 0 else 0.0
-        print(f"⏱️ 耗时统计: 设备 {device_for_log} | 注意力 {self.current_attn_implementation} | 输入 {input_ids_len} | 输出 {generated_tokens} | 模型加载 {load_time:.2f}s | 推理生成 {gen_time:.2f}s ({tps:.1f} tok/s) | 总计 {total_time:.2f}s")
-        
-        if not 保持模型加载:
+        print(f"⏱️ Timing: device {device_for_log} | attn {self.current_attn_implementation} | in {input_ids_len} | out {generated_tokens} | load {load_time:.2f}s | gen {gen_time:.2f}s ({tps:.1f} tok/s) | total {total_time:.2f}s")
+
+        if not keep_model_loaded:
             self.clear_model_resources()
         return (text.strip(),)
 
 
-# 节点注册
+# Node registration
 NODE_CLASS_MAPPINGS = {
     "Qwen3VL_Advanced": Qwen3VL_Advanced,
     "Qwen3VL_Chat": Qwen3VL_Chat,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Qwen3VL_Advanced": "🍭大炮-Qwen3VL@炮老师的小课堂",
-    "Qwen3VL_Chat": "🍭大炮-Qwen3VL智能对话@炮老师的小课堂",
+    "Qwen3VL_Advanced": "Qwen3VL-DP",
+    "Qwen3VL_Chat": "Qwen3VL-DP Chat",
 }

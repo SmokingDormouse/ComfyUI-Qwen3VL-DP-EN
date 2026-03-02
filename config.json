@@ -1,17 +1,17 @@
 {
     "_preset_prompts": [
-        "提示词风格 - 标签",
-        "提示词风格 - 简单",
-        "提示词风格 - 详细",
-        "提示词风格 - 极致详细",
-        "提示词风格 - 电影感"
+        "Prompt Style - Tags",
+        "Prompt Style - Simple",
+        "Prompt Style - Detailed",
+        "Prompt Style - Ultra Detailed",
+        "Prompt Style - Cinematic"
     ],
     "_system_prompts": {
-        "提示词风格 - 标签": "你的任务是为文生图AI生成一个简洁的逗号分隔标签列表，仅基于图像中的视觉信息。限制输出最多50个唯一标签。严格描述视觉元素，如主体、服装、环境、颜色、光照和构图。不要包含抽象概念、解释、营销术语或技术术语。目标是一个简洁的视觉描述符列表。避免重复标签。",
-        "提示词风格 - 简单": "分析图像并生成一个简单的单句文生图提示词。简洁地描述主要主体和场景。",
-        "提示词风格 - 详细": "基于图像生成一个详细的艺术性文生图提示词。将主体、动作、环境、光照和整体氛围组合成一个连贯的段落，约2-3句话。关注关键视觉细节。",
-        "提示词风格 - 极致详细": "从图像生成一个极其详细和描述性的文生图提示词。创建一个丰富的段落，详细阐述主体的外观、服装纹理、具体背景元素、光线的质量和颜色、阴影以及整体氛围。追求高度描述性和沉浸式的提示词。",
-        "提示词风格 - 电影感": "作为一个大师级提示词工程师。为图像生成AI创建一个高度详细和富有感染力的提示词。描述主体、姿势、环境、光照、情绪和艺术风格（如照片写实、电影感、绘画风格）。将所有元素编织成一个自然语言段落，专注于视觉冲击力。"
+        "Prompt Style - Tags": "Your task is to generate a concise comma-separated tag list for text-to-image AI, based solely on the visual information in the image. Limit output to a maximum of 50 unique tags. Strictly describe visual elements such as subject, clothing, environment, colors, lighting, and composition. Do not include abstract concepts, interpretations, marketing terms, or technical jargon. The goal is a concise list of visual descriptors. Avoid duplicate tags.",
+        "Prompt Style - Simple": "Analyze the image and generate a simple single-sentence text-to-image prompt. Concisely describe the main subject and scene.",
+        "Prompt Style - Detailed": "Generate a detailed artistic text-to-image prompt based on the image. Combine subject, action, environment, lighting, and overall atmosphere into a coherent paragraph of approximately 2-3 sentences. Focus on key visual details.",
+        "Prompt Style - Ultra Detailed": "Generate an extremely detailed and descriptive text-to-image prompt from the image. Create a rich paragraph that elaborates on the subject's appearance, clothing textures, specific background elements, quality and color of light, shadows, and overall atmosphere. Aim for a highly descriptive and immersive prompt.",
+        "Prompt Style - Cinematic": "As a master prompt engineer. Create a highly detailed and evocative prompt for image generation AI. Describe the subject, pose, environment, lighting, mood, and artistic style (such as photorealistic, cinematic, painterly). Weave all elements into a natural language paragraph, focusing on visual impact."
     },
     "Qwen3-VL-2B-Instruct": {
         "repo_id": "Qwen/Qwen3-VL-2B-Instruct",
@@ -188,7 +188,7 @@
             "8bit": 3.5,
             "4bit": 2.0
         },
-        "warning": "此模型已移除安全过滤，可能生成敏感内容。仅用于研究和测试环境。"
+        "warning": "This model has safety filters removed and may generate sensitive content. For research and testing environments only."
     },
     "Huihui-Qwen3-VL-8B-Instruct-Abliterated": {
         "repo_id": "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
@@ -200,6 +200,6 @@
             "8bit": 7.0,
             "4bit": 4.5
         },
-        "warning": "此模型已移除安全过滤，可能生成敏感内容。仅用于研究和测试环境。"
+        "warning": "This model has safety filters removed and may generate sensitive content. For research and testing environments only."
     }
 }
